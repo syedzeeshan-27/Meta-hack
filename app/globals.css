@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+}
+
+body {
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  overscroll-behavior: none;
+}
+
+/* The glowing outline SAM draws around the part to touch. */
+@keyframes outline-pulse {
+  0%,
+  100% {
+    stroke-opacity: 1;
+  }
+  50% {
+    stroke-opacity: 0.45;
+  }
+}
+
+.part-outline {
+  fill: rgb(34 211 238 / 0.18);
+  stroke: rgb(34 211 238);
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 6px rgb(34 211 238 / 0.9));
+  animation: outline-pulse 1.4s ease-in-out infinite;
+}
