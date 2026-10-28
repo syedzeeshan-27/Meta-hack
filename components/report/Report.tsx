@@ -1,71 +1,92 @@
 import type { Comparison, Inspection } from "@/lib/inspect/types";
-import { EvidenceFooter } from "./EvidenceFooter";
+import { EvidenceSection } from "./EvidenceFooter";
+import { NewIssueCard } from "./FindingCard";
+import { formatRange, plural } from "./format";
+import { MarkList, MissingItems } from "./OtherFindings";
 import { ReportHeader } from "./ReportHeader";
-import { photoCount, resolveFindings, roomOrder } from "./resolve";
-import { RoomSection } from "./RoomSection";
-import { Summary } from "./Summary";
+import { resolveFindings, roomOrder, sortByRoom } from "./resolve";
+import { ReportActions, StickyShare } from "./ShareActions";
+import { Verdict } from "./Verdict";
 
-const totalPhotos = (i: Inspection) => i.rooms.reduce((n, r) => n + r.frames.length, 0);
+const SHARE_TITLE = "Deposit inspection report";
 
-/** The finished report: header, summary, room by room, items not seen, evidence. */
+/** The finished report, in the order a landlord or tenant needs it: verdict, new issues, the rest, evidence. */
 export function Report({ moveIn, moveOut, comparison }: { moveIn: Inspection; moveOut: Inspection; comparison: Comparison }) {
-  const findings = resolveFindings(moveIn, moveOut, comparison.findings);
   const rooms = roomOrder(moveIn, moveOut, comparison);
-  const count = (status: string) => findings.filter((f) => f.status === status).length;
+  const all = resolveFindings(moveIn, moveOut, comparison.findings);
+  const pick = (status: string) => sortByRoom(all.filter((f) => f.status === status), rooms);
+  const fresh = pick("new");
+  const existing = pick("pre_existing");
+  const wear = pick("wear");
+  const missing = comparison.missingItems;
+
+  const property = moveOut.property || moveIn.property;
+  const city = moveOut.city || moveIn.city;
+  const place = [property, city].filter(Boolean).join(", ");
+  const priced = comparison.total.high > 0;
+  const shareText =
+    fresh.length === 0
+      ? `Move-out inspection${place ? ` for ${place}` : ""}: no new damage since move-in, so the full deposit should be returned. Photos and fingerprints:`
+      : `Move-out inspection${place ? ` for ${place}` : ""}: ${plural(fresh.length, "new issue")} since move-in${
+          priced ? `, fair deduction ${formatRange(comparison.total)}` : ""
+        }. Before/after photos, prices and sources:`;
 
   return (
     <>
       <ReportHeader
-        property={moveOut.property || moveIn.property}
-        city={moveOut.city || moveIn.city}
+        property={property}
+        city={city}
         moveInAt={moveIn.createdAt}
         moveOutAt={moveOut.finishedAt ?? moveOut.createdAt}
-        reportId={moveOut.id}
       />
 
-      <Summary
-        newCount={count("new")}
-        existingCount={count("pre_existing")}
-        wearCount={count("wear")}
+      <Verdict
+        newCount={fresh.length}
+        existingCount={existing.length}
+        wearCount={wear.length}
+        missingCount={missing.length}
+        unpriced={fresh.filter((f) => !f.cost).length}
         total={comparison.total}
-        photosIn={totalPhotos(moveIn)}
-        photosOut={totalPhotos(moveOut)}
-        roomCount={rooms.length}
+        actions={<ReportActions title={SHARE_TITLE} text={shareText} />}
       />
 
-      <div className="mt-12">
-        <h2 className="text-sm font-semibold tracking-wide text-(color:--muted) uppercase">Room by room</h2>
-        {rooms.map((room) => (
-          <RoomSection
-            key={room}
-            room={room}
-            findings={findings.filter((f) => f.room === room)}
-            photosIn={photoCount(moveIn, room)}
-            photosOut={photoCount(moveOut, room)}
-          />
-        ))}
-      </div>
-
-      {comparison.missingItems.length > 0 && (
-        <section className="mt-12 print:break-inside-avoid" aria-labelledby="missing-title">
-          <h2 id="missing-title" className="text-2xl font-semibold tracking-tight">
-            Not seen at move-out
-          </h2>
-          <p className="mt-2 max-w-prose leading-relaxed text-(color:--muted)">
-            Listed at move-in but not spotted in the move-out photos. They may simply have been out of frame.
+      {fresh.length > 0 && (
+        <section aria-labelledby="new-title" className="mt-10">
+          <div className="flex items-baseline justify-between gap-3 print:break-after-avoid">
+            <h2 id="new-title" className="text-xl leading-[26px] font-semibold">
+              New issues
+            </h2>
+            <span className="text-sm text-muted">Chargeable · {fresh.length}</span>
+          </div>
+          <p className="mt-1 text-sm text-muted">
+            Seen at move-out, not at move-in. <span className="print:hidden">Tap a photo to zoom in.</span>
           </p>
-          <ul className="mt-3 divide-y divide-(--line) rounded-xl border border-(--line) bg-(--card) px-4">
-            {comparison.missingItems.map((m, i) => (
-              <li key={`${m.room}-${m.item}-${i}`} className="flex justify-between gap-4 py-3">
-                <span className="font-medium">{m.item}</span>
-                <span className="text-(color:--muted)">{m.room}</span>
-              </li>
+          <div className="mt-4 space-y-4">
+            {fresh.map((f, i) => (
+              <NewIssueCard
+                key={`${f.after.frameId}-${f.after.defectId}-${i}`}
+                finding={f}
+                index={i}
+                pageBreak={i > 0 && f.room !== fresh[i - 1].room}
+              />
             ))}
-          </ul>
+          </div>
         </section>
       )}
 
-      <EvidenceFooter moveIn={moveIn} moveOut={moveOut} models={comparison.models} generatedAt={comparison.createdAt} />
+      {(existing.length > 0 || wear.length > 0 || missing.length > 0) && (
+        <div className="mt-10 space-y-3">
+          {existing.length > 0 && <MarkList kind="pre_existing" findings={existing} />}
+          {wear.length > 0 && <MarkList kind="wear" findings={wear} />}
+          {missing.length > 0 && <MissingItems items={missing} />}
+        </div>
+      )}
+
+      <EvidenceSection moveIn={moveIn} moveOut={moveOut} models={comparison.models} generatedAt={comparison.createdAt} />
+
+      <StickyShare title={SHARE_TITLE} text={shareText} />
+      {/* Room for the phone share bar, so it never covers the footer. */}
+      <div aria-hidden className="h-20 sm:hidden print:hidden" />
     </>
   );
 }

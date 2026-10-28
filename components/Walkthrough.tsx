@@ -1,8 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type {
   AddFrameRequest,
   AddFrameResponse,
@@ -16,6 +15,36 @@ import type {
 } from "@/lib/inspect/types";
 import { createKeyframeSampler, type Keyframe, type KeyframeSampler, type SkipReason } from "@/lib/keyframes";
 import { startRecording, type WavRecorder } from "@/lib/wav-recorder";
+import AskSheet from "@/components/AskSheet";
+import CameraStage, { type CameraHandle, type CameraStatus, type StageOutline } from "@/components/camera/CameraStage";
+import { CoachOverlay, type CoachTip } from "@/components/camera/CoachOverlay";
+import { DesktopHandoff } from "@/components/camera/DesktopHandoff";
+import { RoundButton } from "@/components/camera/RoundButton";
+import { useIsDesktop, useLatest, useLocalFlag, useOnline } from "@/components/camera/hooks";
+import { outlineClass, type OutlineTone } from "@/components/camera/outlines";
+import { useAskSession } from "@/components/camera/useAskSession";
+import { clock, plural, short } from "@/components/camera/util";
+import {
+  Button,
+  ButtonLink,
+  CaptionBar,
+  Card,
+  CheckIcon,
+  ChevronDownIcon,
+  Chip,
+  CloseIcon,
+  IconButton,
+  MicIcon,
+  Page,
+  PauseIcon,
+  PlayIcon,
+  PlusIcon,
+  Sheet,
+  SparkleIcon,
+  Spinner,
+  StatusPill,
+  type Tone,
+} from "@/components/ui";
 
 const ROOM_PICKS = ["Living room", "Bedroom", "Kitchen", "Bathroom", "Balcony"];
 const POLL_MS = 2500;
@@ -24,36 +53,29 @@ const MAX_TRIES = 4;
 const FLASH_MS = 2800;
 const SPEAK_GAP_MS = 6000;
 const HINT_MS = 2000;
-const TOAST_MS = 3500;
+const CAPTION_MS = 5000;
 const MIN_NOTE_MS = 600;
 const STRIP_SIZE = 3;
+const MIN_ROOM_PHOTOS = 3;
+const ASK_MAX_SIDE = 1024;
+const COACH_KEY = "dg.coach.v1";
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
 type Mode = "idle" | "recording" | "paused";
-type Sheet = "start" | "change" | "next";
+type PickerKind = "start" | "change" | "next";
 type Upload = { body: AddFrameRequest; tries: number; error?: string };
 type Flash = { id: string; outlines: DefectOutline[] };
-type Toast = { text: string; error?: boolean };
-type Finishing = { stage: "uploading" | "saving" | "failed" | "error"; message?: string };
-type Timers = Partial<Record<"flash" | "hint" | "toast", ReturnType<typeof setTimeout>>>;
-
-/** Move-in marks are amber ("already here"); move-out marks use the red tone-problem class. */
-const AMBER_STROKE = "rgb(251 191 36)";
-const RED_STROKE = "rgb(248 113 113)";
-const AMBER_OUTLINE: CSSProperties = {
-  stroke: AMBER_STROKE,
-  fill: "rgb(251 191 36 / 0.18)",
-  filter: "drop-shadow(0 0 6px rgb(251 191 36 / 0.9))",
-};
+type Caption = { text: string; sub?: string };
+type Finishing = { stage: "uploading" | "saving" | "failed" | "error"; message?: string; total: number };
+type ConfirmFinish = { thin: { name: string; photos: number }[]; empty: boolean };
+type Timers = Partial<Record<"flash" | "hint" | "caption", ReturnType<typeof setTimeout>>>;
 
 const HINT_TEXT: Record<SkipReason, string> = {
-  dark: "Too dark. Switch on a light.",
-  blurry: "Hold steady for a moment.",
+  dark: "Too dark: turn on a light.",
+  blurry: "Too blurry: hold steady for a second.",
 };
 
 const SEVERITY_RANK: Record<Severity, number> = { major: 0, moderate: 1, minor: 2 };
-
-const chip = "flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-1.5 text-xs backdrop-blur";
 
 class HttpError extends Error {
   status: number;
@@ -65,11 +87,12 @@ class HttpError extends Error {
 
 export default function Walkthrough({ id }: { id: string }) {
   const router = useRouter();
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const camRef = useRef<CameraHandle>(null);
   const samplerRef = useRef<KeyframeSampler | null>(null);
   const roomRef = useRef("");
   const modeRef = useRef<Mode>("idle");
   const capturingRef = useRef(false);
+  const askOpenRef = useRef(false);
   // Upload queue: never drops a frame silently. Failed ones wait in failedRef until retried.
   const queueRef = useRef<Upload[]>([]);
   const failedRef = useRef<Upload[]>([]);
@@ -88,41 +111,63 @@ export default function Walkthrough({ id }: { id: string }) {
   const noteStartRef = useRef(0);
   const hintRef = useRef<SkipReason | null>(null);
   const timersRef = useRef<Timers>({});
+  const finishRunRef = useRef(0);
 
   const [inspection, setInspection] = useState<Inspection | null>(null);
   const [loadError, setLoadError] = useState("");
   const [missing, setMissing] = useState(false);
   const [room, setRoom] = useState("");
   const [mode, setMode] = useState<Mode>("idle");
-  const [picker, setPicker] = useState<Sheet | null>(null);
+  const [picker, setPicker] = useState<PickerKind | null>(null);
+  const [startDismissed, setStartDismissed] = useState(false);
+  const [otherOpen, setOtherOpen] = useState(false);
   const [customRoom, setCustomRoom] = useState("");
-  const [cameraError, setCameraError] = useState("");
+  const [confirm, setConfirm] = useState<ConfirmFinish | null>(null);
+  const [doneRooms, setDoneRooms] = useState<string[]>([]);
+  const [camStatus, setCamStatus] = useState<CameraStatus>("idle");
   const [uploads, setUploads] = useState({ active: 0, failed: 0 });
   const [flash, setFlash] = useState<Flash | null>(null);
   const [hint, setHint] = useState<SkipReason | null>(null);
+  const [caption, setCaption] = useState<Caption | null>(null);
   const [voice, setVoice] = useState<"idle" | "recording" | "sending">("idle");
-  const [toast, setToast] = useState<Toast | null>(null);
   const [finishing, setFinishing] = useState<Finishing | null>(null);
+  const [askOpen, setAskOpen] = useState(false);
+  const [leaveOpen, setLeaveOpen] = useState(false);
+  const [rec, setRec] = useState({ acc: 0, since: 0 });
+  const [now, setNow] = useState(0);
+  const [cameraAnyway, setCameraAnyway] = useState(false);
+
+  const isDesktop = useIsDesktop();
+  const online = useOnline();
+  const [coachSeen, markCoachSeen] = useLocalFlag(COACH_KEY);
+  const ask = useAskSession({ capture: () => camRef.current?.captureFrame(ASK_MAX_SIDE, 0.8) ?? null });
+  const askLatest = useLatest(ask);
 
   const kind: InspectionKind = inspection?.kind ?? "move_in";
-  const live = mode !== "idle";
   const recording = mode === "recording";
-  const capturing = recording && !picker && !finishing;
-  const sheet: Sheet | null = mode === "idle" ? "start" : picker;
+  const camLive = camStatus === "live";
+  const camUp = camLive || camStatus === "starting" || camStatus === "paused";
+  const showCoach = camLive && !coachSeen;
+  const sheet: PickerKind | null = mode === "idle" && !startDismissed ? "start" : picker;
+  const sheetOpen = !!sheet && camUp && !showCoach && !finishing;
+  const capturing = recording && camLive && !sheetOpen && !finishing && !askOpen && !leaveOpen && !showCoach;
 
   function changeMode(m: Mode) {
+    const t = Date.now();
+    setRec((r) => (m === "recording" ? (r.since ? r : { acc: r.acc, since: t }) : r.since ? { acc: r.acc + t - r.since, since: 0 } : r));
+    setNow(t);
     modeRef.current = m;
     setMode(m);
   }
 
-  // ---------- speech ----------
+  // ---------- speech + captions ----------
 
   function speak(text: string, force = false) {
     const synth = typeof window !== "undefined" ? window.speechSynthesis : undefined;
-    if (!synth || !text || recorderRef.current || holdingRef.current) return;
-    const now = Date.now();
-    if (!force && now - lastSpokeRef.current < SPEAK_GAP_MS) return;
-    lastSpokeRef.current = now;
+    if (!synth || !text || recorderRef.current || holdingRef.current || askOpenRef.current) return;
+    const t = Date.now();
+    if (!force && t - lastSpokeRef.current < SPEAK_GAP_MS) return;
+    lastSpokeRef.current = t;
     synth.cancel();
     const u = new SpeechSynthesisUtterance(text);
     u.rate = 1.05;
@@ -130,10 +175,17 @@ export default function Walkthrough({ id }: { id: string }) {
     synth.speak(u);
   }
 
-  function showToast(text: string, error = false) {
-    clearTimeout(timersRef.current.toast);
-    setToast({ text, error });
-    timersRef.current.toast = setTimeout(() => setToast(null), TOAST_MS);
+  function showCaption(text: string, sub?: string) {
+    clearTimeout(timersRef.current.caption);
+    setCaption({ text, sub });
+    timersRef.current.caption = setTimeout(() => setCaption(null), CAPTION_MS);
+  }
+
+  /** Caption always; speech when it isn't throttled. */
+  function say(text: string, force = false) {
+    if (!text) return;
+    showCaption(text);
+    speak(text, force);
   }
 
   // ---------- inspection state from the server ----------
@@ -175,7 +227,7 @@ export default function Walkthrough({ id }: { id: string }) {
         timersRef.current.flash = setTimeout(() => setFlash(null), FLASH_MS);
       }
     }
-    speak(lineFor(hit.frame.defects));
+    say(lineFor(hit.frame.defects));
   }
 
   useEffect(() => {
@@ -244,7 +296,8 @@ export default function Walkthrough({ id }: { id: string }) {
   }
 
   function pump() {
-    while (inflightRef.current < MAX_IN_FLIGHT && queueRef.current.length) {
+    // Offline: hold the queue (don't burn retries); the `online` listener pumps again.
+    while (navigator.onLine !== false && inflightRef.current < MAX_IN_FLIGHT && queueRef.current.length) {
       const job = queueRef.current.shift()!;
       inflightRef.current++;
       void send(job);
@@ -280,11 +333,12 @@ export default function Walkthrough({ id }: { id: string }) {
       uploadedRef.current.set(frame.id, { room: job.body.room, frame });
       setInspection((i) => i && withFrame(i, job.body.room, frame));
     } catch (err) {
-      job.tries++;
       job.error = short(err);
       const status = err instanceof HttpError ? err.status : 0;
       const permanent = status >= 400 && status < 500 && status !== 408 && status !== 429;
-      if (!permanent && job.tries < MAX_TRIES) {
+      if (!permanent && navigator.onLine === false) {
+        queueRef.current.unshift(job); // went offline mid-upload: wait for the connection, no retry used
+      } else if (!permanent && ++job.tries < MAX_TRIES) {
         backoffRef.current++;
         setTimeout(() => {
           backoffRef.current--;
@@ -305,9 +359,17 @@ export default function Walkthrough({ id }: { id: string }) {
     pump();
   }
 
-  // ---------- camera + keyframes ----------
+  // Back online: send what waited, and retry what failed.
+  useEffect(() => {
+    const onOnline = () => retryFailed();
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- retryFailed only touches refs and state setters
+  }, []);
 
-  // Keep the sampler in step with what's on screen. Defined before the camera effect so the ref is set first.
+  // ---------- keyframes ----------
+
+  // Keep the sampler in step with what's on screen. Declared before the sampler effect so the ref is set first.
   useEffect(() => {
     capturingRef.current = capturing;
     const s = samplerRef.current;
@@ -316,44 +378,28 @@ export default function Walkthrough({ id }: { id: string }) {
     else s.pause();
   }, [capturing]);
 
+  // One sampler per live camera stream (a hidden tab releases the camera; it comes back as a new stream).
   useEffect(() => {
-    if (!live) return;
-    let cancelled = false;
-    let stream: MediaStream | null = null;
-    let sampler: KeyframeSampler | null = null;
-    const video = videoRef.current;
-    (async () => {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
-          audio: false,
-        });
-      } catch (err) {
-        if (!cancelled) setCameraError(short(err));
-        return;
-      }
-      if (cancelled || !video) {
-        stream.getTracks().forEach((t) => t.stop());
-        return;
-      }
-      video.srcObject = stream;
-      await video.play().catch(() => {});
-      if (cancelled) return;
-      setCameraError("");
-      sampler = createKeyframeSampler(video, { onKeyframe: (k) => onKeyframe(k), onSkip: (r) => onSkip(r) });
-      if (!capturingRef.current) sampler.pause();
-      sampler.start();
-      samplerRef.current = sampler;
-    })();
+    if (camStatus !== "live") return;
+    const video = camRef.current?.video();
+    if (!video) return;
+    const sampler = createKeyframeSampler(video, { onKeyframe: (k) => onKeyframe(k), onSkip: (r) => onSkip(r) });
+    if (!capturingRef.current) sampler.pause();
+    sampler.start();
+    samplerRef.current = sampler;
     return () => {
-      cancelled = true;
-      sampler?.stop();
+      sampler.stop();
       if (samplerRef.current === sampler) samplerRef.current = null;
-      stream?.getTracks().forEach((t) => t.stop());
-      if (video) video.srcObject = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the callbacks only touch refs and state setters
-  }, [live]);
+  }, [camStatus]);
+
+  // REC clock.
+  useEffect(() => {
+    if (!recording) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [recording]);
 
   // Keep the screen awake while recording.
   useEffect(() => {
@@ -378,18 +424,20 @@ export default function Walkthrough({ id }: { id: string }) {
   }, [recording]);
 
   // Warn before closing the tab with photos still uploading.
-  const uploading = uploads.active > 0;
+  const unsent = uploads.active + uploads.failed;
+  const hasUnsent = unsent > 0;
   useEffect(() => {
-    if (!uploading) return;
+    if (!hasUnsent) return;
     const warn = (e: BeforeUnloadEvent) => {
       e.preventDefault();
       e.returnValue = "";
     };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [uploading]);
+  }, [hasUnsent]);
 
-  // Next keeps this page alive (hidden) after navigating away. Pause so coming back doesn't film straight away.
+  // Next keeps this page alive (hidden) after navigating away. Pause so coming back doesn't film straight away,
+  // and close the transient sheets (Ask's mic is released by its own hook).
   useLayoutEffect(
     () => () => {
       if (modeRef.current === "recording") changeMode("paused");
@@ -398,6 +446,10 @@ export default function Walkthrough({ id }: { id: string }) {
       holdingRef.current = false;
       if (rec) void rec.stop().catch(() => {});
       setVoice("idle");
+      askOpenRef.current = false;
+      askLatest.current.stop();
+      setAskOpen(false);
+      setLeaveOpen(false);
       window.speechSynthesis?.cancel();
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- cleanup only
@@ -406,27 +458,80 @@ export default function Walkthrough({ id }: { id: string }) {
 
   // ---------- rooms ----------
 
-  function chooseRoom(name: string) {
+  /** start: the first room (starts recording). record: switch and keep filming. keep: switch, same mode. */
+  function chooseRoom(name: string, then: "start" | "record" | "keep") {
     const clean = name.trim().replace(/\s+/g, " ").slice(0, 40);
     if (!clean) return;
     if (clean !== roomRef.current) samplerRef.current?.reset(); // keep the first view of a new room straight away
     roomRef.current = clean;
     setRoom(clean);
     setCustomRoom("");
+    setOtherOpen(false);
+    setConfirm(null);
+    setDoneRooms((d) => d.filter((r) => r !== clean));
     try {
       sessionStorage.setItem(roomKey(id), clean);
     } catch {}
-    const from = sheet;
     setPicker(null);
-    if (from === "start") {
+    if (then === "start") {
       // iOS only lets speech play once something was spoken inside a tap.
       window.speechSynthesis?.speak(new SpeechSynthesisUtterance(""));
       changeMode("recording");
-      speak(`Recording ${clean}. Move slowly.`, true);
-    } else if (from === "next") {
+      say(`Recording ${clean}. Move slowly.`, true);
+    } else if (then === "record") {
       changeMode("recording");
-      speak(`Recording ${clean}.`, true);
-    }
+      say(`Recording ${clean}.`, true);
+    } else showCaption(`Now in ${clean}`);
+  }
+
+  function pickRoom(name: string) {
+    chooseRoom(name, sheet === "start" ? "start" : sheet === "next" ? "record" : "keep");
+  }
+
+  function openStart() {
+    setStartDismissed(false);
+    setPicker("start");
+  }
+
+  function closeSheet() {
+    if (sheet === "start") setStartDismissed(true);
+    if (sheet === "next") setDoneRooms((d) => d.filter((r) => r !== room)); // closed it: still filming this room
+    setPicker(null);
+    setOtherOpen(false);
+    setConfirm(null);
+  }
+
+  function doneWithRoom() {
+    if (room) setDoneRooms((d) => (d.includes(room) ? d : [...d, room]));
+    setPicker("next");
+  }
+
+  function togglePause() {
+    if (mode === "idle" || !room) return openStart();
+    changeMode(recording ? "paused" : "recording");
+  }
+
+  // ---------- leaving ----------
+
+  function requestLeave() {
+    if (unsent > 0) setLeaveOpen(true);
+    else router.push("/");
+  }
+
+  // ---------- Ask (same camera, sheet over it) ----------
+
+  function openAsk() {
+    window.speechSynthesis?.cancel();
+    askOpenRef.current = true;
+    setAskOpen(true);
+    void ask.start(); // inside the tap: the mic needs it on iOS
+  }
+
+  function closeAsk() {
+    askOpenRef.current = false;
+    ask.stop();
+    ask.clearOutline();
+    setAskOpen(false);
   }
 
   // ---------- voice notes (hold to talk) ----------
@@ -436,34 +541,34 @@ export default function Walkthrough({ id }: { id: string }) {
     holdingRef.current = true;
     window.speechSynthesis?.cancel();
     try {
-      const rec = await startRecording();
+      const r = await startRecording();
       if (!holdingRef.current) {
-        void rec.stop().catch(() => {});
-        showToast("Hold the button while you talk.");
+        void r.stop().catch(() => {});
+        showCaption("Hold the button while you talk.", "Voice note");
         return;
       }
-      recorderRef.current = rec;
+      recorderRef.current = r;
       noteStartRef.current = Date.now();
       setVoice("recording");
     } catch (err) {
       holdingRef.current = false;
-      showToast(`Mic blocked: ${short(err)}`, true);
+      showCaption(`Microphone blocked: ${short(err)}`, "Voice note");
     }
   }
 
   async function voiceUp() {
     holdingRef.current = false;
-    const rec = recorderRef.current;
-    if (!rec) return;
+    const r = recorderRef.current;
+    if (!r) return;
     recorderRef.current = null;
     const t = noteStartRef.current;
     const noteRoom = roomRef.current;
     setVoice("sending");
     let text = "";
     try {
-      const wav = await rec.stop();
+      const wav = await r.stop();
       if (Date.now() - t < MIN_NOTE_MS) {
-        showToast("Hold the button while you talk.");
+        showCaption("Hold the button while you talk.", "Voice note");
         return;
       }
       const res = await fetch("/api/transcribe", { method: "POST", headers: { "Content-Type": "audio/wav" }, body: wav });
@@ -471,7 +576,7 @@ export default function Walkthrough({ id }: { id: string }) {
       if (!res.ok || heard.error) throw new Error(heard.error ?? `HTTP ${res.status}`);
       text = (heard.transcript ?? "").trim();
       if (!/[a-z0-9]{2,}/i.test(text)) {
-        showToast("Didn't catch that. Try again.");
+        showCaption("Didn't catch that. Hold the button and try again.", "Voice note");
         return;
       }
       const body: AddNoteRequest = { room: noteRoom, t, text };
@@ -482,9 +587,9 @@ export default function Walkthrough({ id }: { id: string }) {
       });
       const ok = (await saved.json().catch(() => ({}))) as { ok?: boolean; error?: string };
       if (!saved.ok || ok.error) throw new Error(ok.error ?? `HTTP ${saved.status}`);
-      showToast(`Note saved: “${text}”`);
+      showCaption(`“${text}”`, `Note saved · ${noteRoom}`);
     } catch (err) {
-      showToast(text ? `Note not saved (“${text}”): ${short(err)}` : `Note not saved: ${short(err)}`, true);
+      showCaption(text ? `Not saved: “${text}”. ${short(err)}` : `Note not saved: ${short(err)}`, "Voice note");
     } finally {
       setVoice("idle");
     }
@@ -492,16 +597,28 @@ export default function Walkthrough({ id }: { id: string }) {
 
   // ---------- finish ----------
 
+  function requestFinish() {
+    const filmed = inspection?.rooms.filter((r) => r.frames.length > 0) ?? [];
+    const thin = filmed.filter((r) => r.frames.length < MIN_ROOM_PHOTOS).map((r) => ({ name: r.name, photos: r.frames.length }));
+    if (!filmed.length || thin.length) setConfirm({ thin, empty: !filmed.length });
+    else void finishInspection();
+  }
+
   async function finishInspection(force = false) {
+    const run = ++finishRunRef.current;
     setPicker(null);
-    setFinishing({ stage: "uploading" });
+    setConfirm(null);
+    setOtherOpen(false);
+    const total = queueRef.current.length + inflightRef.current + backoffRef.current;
+    setFinishing({ stage: "uploading", total });
     await waitForUploads();
+    if (run !== finishRunRef.current) return;
     if (failedRef.current.length && !force) {
       const n = failedRef.current.length;
-      setFinishing({ stage: "failed", message: `${n} ${n === 1 ? "photo" : "photos"} didn't upload.` });
+      setFinishing({ stage: "failed", message: `${plural(n, "photo")} didn't upload.`, total });
       return;
     }
-    setFinishing({ stage: "saving" });
+    setFinishing({ stage: "saving", total });
     try {
       const res = await fetch(`/api/inspections/${encodeURIComponent(id)}/finish`, { method: "POST" });
       const data = (await res.json().catch(() => ({}))) as Partial<Inspection> & { error?: string };
@@ -513,8 +630,14 @@ export default function Walkthrough({ id }: { id: string }) {
       const k = data.kind ?? inspection?.kind;
       router.push(k === "move_out" ? `/r/${encodeURIComponent(id)}` : `/?saved=${encodeURIComponent(id)}`);
     } catch (err) {
-      setFinishing({ stage: "error", message: short(err) });
+      if (run === finishRunRef.current) setFinishing({ stage: "error", message: short(err), total });
     }
+  }
+
+  function closeFinishing() {
+    if (finishing?.stage === "saving") return; // the finish call is already on its way (about a second)
+    finishRunRef.current++;
+    setFinishing(null);
   }
 
   // ---------- derived ----------
@@ -524,343 +647,479 @@ export default function Walkthrough({ id }: { id: string }) {
   const checking = roomFrames.filter((f) => f.status === "pending").length;
   const marks = uniqueMarks(roomFrames);
   const strip = marks.slice(0, STRIP_SIZE);
-  const notes = currentRoom?.notes.length ?? 0;
-  const tally = [
-    plural(roomFrames.length, "photo"),
-    `${marks.length} ${marks.length === 1 ? "mark" : "marks"} noted`,
-    checking ? `${checking} checking` : "",
-    notes ? plural(notes, "note") : "",
-  ]
+  const tally = [plural(roomFrames.length, "photo"), plural(marks.length, "mark"), checking ? `${checking} checking` : ""]
     .filter(Boolean)
     .join(" · ");
 
   const resumeRoom = room || inspection?.rooms.at(-1)?.name || "";
-  const roomOptions = [...ROOM_PICKS, ...(inspection?.rooms.map((r) => r.name).filter((n) => !ROOM_PICKS.includes(n)) ?? [])].map((name) => ({
-    name,
-    photos: inspection?.rooms.find((r) => r.name === name)?.frames.length ?? 0,
-  }));
+  const roomNames = [...ROOM_PICKS, ...(inspection?.rooms.map((r) => r.name).filter((n) => !ROOM_PICKS.includes(n)) ?? [])];
+  if (room && !roomNames.includes(room)) roomNames.push(room);
+  const roomOptions = roomNames.map((name) => {
+    const photos = inspection?.rooms.find((r) => r.name === name)?.frames.length ?? 0;
+    return { name, photos, done: doneRooms.includes(name) || (photos > 0 && name !== room) };
+  });
+  const hasPhotos = !!inspection?.rooms.some((r) => r.frames.length > 0);
 
-  const outlineClass = kind === "move_out" ? "part-outline tone-problem" : "part-outline";
-  const outlineStyle = kind === "move_out" ? undefined : AMBER_OUTLINE;
+  const tone: OutlineTone = kind === "move_out" ? "new" : "existing";
+  const stageOutlines: StageOutline[] = [
+    ...(flash
+      ? flash.outlines.map((o, i) => ({ key: `${flash.id}-${i}`, width: o.width, height: o.height, outlines: o.outlines, tone }))
+      : []),
+    ...(askOpen && ask.outline ? [ask.outline] : []),
+  ];
+
+  const elapsed = rec.acc + (rec.since ? Math.max(0, now - rec.since) : 0);
+  // The pill is an aria-live region: keep the ticking clock out of what screen readers announce.
+  const pill: { tone: Tone; pulse?: boolean; text: ReactNode } = !online
+    ? { tone: "existing", text: unsent ? `Offline · ${unsent} waiting` : "Offline" }
+    : capturing
+      ? { tone: "info", pulse: true, text: <>REC<span aria-hidden> {clock(elapsed)}</span></> }
+      : loadError
+        ? { tone: "existing", text: "Reconnecting…" }
+        : uploads.active
+          ? { tone: "info", text: `Uploading ${uploads.active}` }
+          : mode === "idle"
+            ? { tone: "neutral", text: "Ready" }
+            : { tone: "neutral", text: "Paused" };
+
+  const captionLine: Caption | null =
+    voice === "recording"
+      ? { text: "Listening… let go to save the note.", sub: "Voice note" }
+      : capturing && hint
+        ? { text: HINT_TEXT[hint] }
+        : (caption ?? (mode === "idle" && !sheetOpen ? { text: "Tap Start, then pick the room you're in." } : null));
+
   const kindLabel = kind === "move_out" ? "Move-out" : "Move-in";
+  const coachTips: CoachTip[] = [
+    { title: "Walk slowly", body: "Point at each wall, the floor, the ceiling and the fittings. Photos are taken for you." },
+    { title: "Get close to marks", body: "Hold steady for a second near cracks, stains, chips and anything broken." },
+    kind === "move_out"
+      ? { title: "We'll note them for you", body: "Marks get a red outline. At the end we compare them with your move-in record." }
+      : { title: "We'll note them for you", body: "Marks get an amber outline and go into your record. Hold the mic to add a voice note." },
+  ];
 
   // ---------- render ----------
 
-  let body: ReactNode;
   if (missing) {
-    body = (
-      <Centered>
-        <p className="text-lg font-semibold">We couldn&rsquo;t find this inspection.</p>
-        <Link href="/" className="mt-4 block rounded-full bg-white py-3 font-semibold text-black">
+    return (
+      <DocScreen title="We couldn’t find this inspection." body="The link may be wrong, or the inspection was removed.">
+        <ButtonLink href="/" className="mt-5">
           Back home
-        </Link>
-      </Centered>
-    );
-  } else if (!inspection) {
-    body = (
-      <Centered>
-        <p className="text-white/70">{loadError ? "Can’t reach the server. Retrying…" : "Loading…"}</p>
-        {loadError && <p className="mt-1 text-xs text-white/40">{loadError}</p>}
-      </Centered>
-    );
-  } else if (inspection.finishedAt) {
-    const photos = inspection.rooms.reduce((n, r) => n + r.frames.length, 0);
-    body = (
-      <Centered>
-        <p className="text-lg font-semibold">{kind === "move_out" ? "Move-out finished" : "Move-in saved"}</p>
-        <p className="mt-1 text-sm text-white/60">
-          {inspection.property} · {plural(inspection.rooms.length, "room")} · {plural(photos, "photo")}
-        </p>
-        {kind === "move_out" && (
-          <Link href={`/r/${encodeURIComponent(id)}`} className="mt-4 block rounded-full bg-white py-3 font-semibold text-black">
-            View report
-          </Link>
-        )}
-        <Link href="/" className="mt-2 block py-2 text-sm text-white/60">
-          Back home
-        </Link>
-      </Centered>
-    );
-  } else {
-    body = (
-      <>
-        {flash &&
-          flash.outlines.map((o, i) => (
-            <svg
-              key={`${flash.id}-${i}`}
-              className="pointer-events-none absolute inset-0 h-full w-full"
-              viewBox={`0 0 ${o.width} ${o.height}`}
-              preserveAspectRatio="xMidYMid slice"
-            >
-              {o.outlines.map((p, j) => (
-                <path
-                  key={`${p.id}-${j}`}
-                  d={p.path}
-                  transform={p.transform}
-                  className={outlineClass}
-                  style={outlineStyle}
-                  vectorEffect="non-scaling-stroke"
-                  strokeWidth={4}
-                />
-              ))}
-            </svg>
-          ))}
-
-        {/* Top bar: exit, room, status */}
-        <header className="absolute inset-x-0 top-0 flex flex-col gap-2 bg-gradient-to-b from-black/60 to-transparent p-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
-          <div className="flex items-center gap-2">
-            <Link href="/" className={chip}>
-              Exit
-            </Link>
-            <button onClick={() => setPicker("change")} disabled={!live} className={`${chip} min-w-0 text-sm font-medium`}>
-              <span className="truncate">{room || "Choose room"}</span>
-              <span aria-hidden className="text-white/60">
-                ▾
-              </span>
-            </button>
-            <span className={`${chip} ml-auto shrink-0`}>
-              <span className={`h-2 w-2 rounded-full ${capturing ? "animate-pulse bg-red-500" : "bg-white/40"}`} />
-              {capturing ? "Recording" : mode === "paused" ? "Paused" : "Ready"}
-            </span>
-          </div>
-          {live && (
-            <div className="flex flex-wrap items-center gap-1.5 text-xs">
-              <span className="rounded-full bg-black/60 px-2.5 py-1 backdrop-blur">{tally}</span>
-              {uploads.active > 0 && <span className="rounded-full bg-black/60 px-2.5 py-1 text-white/80 backdrop-blur">{uploads.active} uploading</span>}
-              {uploads.failed > 0 && (
-                <button onClick={retryFailed} className="rounded-full bg-red-500/90 px-2.5 py-1">
-                  {uploads.failed} didn&rsquo;t upload · Retry
-                </button>
-              )}
-              {capturing && hint && <span className="rounded-full bg-amber-400 px-2.5 py-1 text-black">{HINT_TEXT[hint]}</span>}
-              {loadError && <span className="rounded-full bg-black/60 px-2.5 py-1 text-white/60 backdrop-blur">Reconnecting…</span>}
-            </div>
-          )}
-        </header>
-
-        {live && cameraError && (
-          <Centered>
-            <p className="font-semibold">Camera blocked</p>
-            <p className="mt-1 text-sm text-white/60">{cameraError}</p>
-            <p className="mt-2 text-sm text-white/60">Allow camera access for this site, then try again.</p>
-            <button
-              onClick={() => {
-                setCameraError("");
-                changeMode("idle");
-              }}
-              className="mt-4 w-full rounded-full bg-white py-3 font-semibold text-black"
-            >
-              Try again
-            </button>
-          </Centered>
-        )}
-
-        {/* Bottom bar: latest marks, then Voice note · Pause/Resume · Finish room */}
-        {live && (
-          <footer className="absolute inset-x-0 bottom-0 flex flex-col gap-3 bg-gradient-to-t from-black/70 to-transparent p-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
-            {toast && (
-              <p className={`max-w-full self-center rounded-2xl px-3 py-1.5 text-center text-sm backdrop-blur ${toast.error ? "bg-red-500/90" : "bg-black/70"}`}>
-                {toast.text}
-              </p>
-            )}
-            {strip.length > 0 && (
-              <ul className="-mx-3 flex gap-2 overflow-x-auto px-3">
-                {strip.map(({ frame, defect }) => (
-                  <li key={`${frame.id}-${defect.id}`} className="flex w-60 shrink-0 items-center gap-2 rounded-xl bg-black/60 p-1.5 pr-3 backdrop-blur">
-                    <DefectThumb frame={frame} defect={defect} kind={kind} />
-                    <p className="line-clamp-2 text-xs leading-snug text-white/90">{defect.description || defect.phrase}</p>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <div className="grid grid-cols-3 items-center">
-              <button
-                onPointerDown={(e) => {
-                  e.currentTarget.setPointerCapture(e.pointerId);
-                  void voiceDown();
-                }}
-                onPointerUp={() => void voiceUp()}
-                onPointerCancel={() => void voiceUp()}
-                onContextMenu={(e) => e.preventDefault()}
-                disabled={voice === "sending"}
-                className={`justify-self-start touch-none rounded-full px-4 py-3 text-sm font-medium transition disabled:opacity-60 ${
-                  voice === "recording" ? "scale-105 bg-red-500" : "bg-white/15 backdrop-blur"
-                }`}
-              >
-                {voice === "recording" ? "Listening…" : voice === "sending" ? "Saving…" : "Voice note"}
-              </button>
-              <button
-                onClick={() => changeMode(recording ? "paused" : "recording")}
-                aria-pressed={!recording}
-                className={`h-20 w-20 justify-self-center rounded-full text-sm font-semibold shadow-lg ${
-                  recording ? "border-4 border-white/80 bg-red-500 text-white" : "bg-white text-black"
-                }`}
-              >
-                {recording ? "Pause" : "Resume"}
-              </button>
-              <button onClick={() => setPicker("next")} className="justify-self-end rounded-full bg-white/15 px-4 py-3 text-sm font-medium backdrop-blur">
-                Finish room
-              </button>
-            </div>
-          </footer>
-        )}
-
-        {/* Room picker sheet: start, change room, or after finishing a room */}
-        {sheet && !cameraError && (
-          <div className="absolute inset-0 flex items-end bg-black/50" onClick={sheet === "start" ? undefined : () => setPicker(null)}>
-            <section
-              onClick={(e) => e.stopPropagation()}
-              className="max-h-[85dvh] w-full overflow-y-auto rounded-t-3xl bg-neutral-900 p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))]"
-            >
-              <h2 className="text-lg font-semibold">
-                {sheet === "start" ? "Which room are you in?" : sheet === "next" ? `${room} done. Where next?` : "Change room"}
-              </h2>
-              {sheet === "start" && (
-                <p className="mt-1 text-sm text-white/60">
-                  {kindLabel} · {inspection.property}. Walk slowly and point at the walls, floor, ceiling and fittings. Photos are taken for you.
-                </p>
-              )}
-              {sheet === "start" && resumeRoom && (
-                <button onClick={() => chooseRoom(resumeRoom)} className="mt-4 w-full rounded-full bg-white py-3 font-semibold text-black">
-                  Continue in {resumeRoom}
-                </button>
-              )}
-              <div className="mt-4 grid grid-cols-2 gap-2">
-                {roomOptions.map((r) => (
-                  <button
-                    key={r.name}
-                    onClick={() => chooseRoom(r.name)}
-                    className={`rounded-xl px-3 py-3 text-left text-sm ${r.name === room && sheet === "change" ? "bg-white text-black" : "bg-white/10"}`}
-                  >
-                    <span className="block truncate font-medium">{r.name}</span>
-                    {r.photos > 0 && <span className="block text-xs opacity-60">{plural(r.photos, "photo")}</span>}
-                  </button>
-                ))}
-              </div>
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  chooseRoom(customRoom);
-                }}
-                className="mt-2 flex gap-2"
-              >
-                <input
-                  value={customRoom}
-                  onChange={(e) => setCustomRoom(e.target.value)}
-                  maxLength={40}
-                  placeholder="Other room, e.g. Bedroom 2"
-                  className="min-w-0 flex-1 rounded-xl bg-white/10 px-3 py-3 text-base outline-none placeholder:text-white/40 focus:ring-2 focus:ring-white/40"
-                />
-                <button type="submit" disabled={!customRoom.trim()} className="rounded-xl bg-white/20 px-4 text-sm font-medium disabled:opacity-40">
-                  Go
-                </button>
-              </form>
-              {sheet === "next" && (
-                <div className="mt-5 flex flex-col gap-2 border-t border-white/10 pt-4">
-                  <button onClick={() => void finishInspection()} className="w-full rounded-full bg-white py-3.5 font-semibold text-black">
-                    Finish inspection
-                  </button>
-                  <button onClick={() => setPicker(null)} className="py-2 text-sm text-white/60">
-                    Keep filming {room}
-                  </button>
-                </div>
-              )}
-              {sheet === "change" && (
-                <button onClick={() => setPicker(null)} className="mt-3 w-full py-2 text-sm text-white/60">
-                  Cancel
-                </button>
-              )}
-              {sheet === "start" && (
-                <Link href="/" className="mt-3 block py-2 text-center text-sm text-white/60">
-                  Back home
-                </Link>
-              )}
-            </section>
-          </div>
-        )}
-
-        {finishing && (
-          <Centered dim>
-            {finishing.stage === "uploading" && (
-              <p>{uploads.active > 0 ? `Uploading ${plural(uploads.active, "photo")} before finishing…` : "Finishing…"}</p>
-            )}
-            {finishing.stage === "saving" && <p>{kind === "move_out" ? "Saving and starting the comparison…" : "Saving your move-in record…"}</p>}
-            {finishing.stage === "failed" && (
-              <>
-                <p className="font-semibold">{finishing.message}</p>
-                <p className="mt-1 text-sm text-white/60">Check your connection and try again, or finish without them.</p>
-                <button
-                  onClick={() => {
-                    retryFailed();
-                    void finishInspection();
-                  }}
-                  className="mt-4 w-full rounded-full bg-white py-3 font-semibold text-black"
-                >
-                  Retry upload
-                </button>
-                <button onClick={() => void finishInspection(true)} className="mt-2 w-full rounded-full bg-white/15 py-3 text-sm font-medium">
-                  Finish without them
-                </button>
-                <button onClick={() => setFinishing(null)} className="mt-1 w-full py-2 text-sm text-white/60">
-                  Back
-                </button>
-              </>
-            )}
-            {finishing.stage === "error" && (
-              <>
-                <p className="font-semibold">Couldn&rsquo;t finish the inspection.</p>
-                <p className="mt-1 break-words text-sm text-white/60">{finishing.message}</p>
-                <button onClick={() => void finishInspection()} className="mt-4 w-full rounded-full bg-white py-3 font-semibold text-black">
-                  Try again
-                </button>
-                <button onClick={() => setFinishing(null)} className="mt-1 w-full py-2 text-sm text-white/60">
-                  Back
-                </button>
-              </>
-            )}
-          </Centered>
-        )}
-      </>
+        </ButtonLink>
+      </DocScreen>
     );
   }
 
+  if (inspection?.finishedAt) {
+    const photos = inspection.rooms.reduce((n, r) => n + r.frames.length, 0);
+    return (
+      <DocScreen
+        ok
+        title={kind === "move_out" ? "Move-out finished" : "Move-in saved"}
+        body={`${inspection.property} · ${plural(inspection.rooms.length, "room")} · ${plural(photos, "photo")}`}
+      >
+        <div className="mt-5 flex flex-wrap gap-3">
+          {kind === "move_out" && <ButtonLink href={`/r/${encodeURIComponent(id)}`}>View report</ButtonLink>}
+          <ButtonLink href="/" variant={kind === "move_out" ? "secondary" : "primary"}>
+            Back home
+          </ButtonLink>
+        </div>
+      </DocScreen>
+    );
+  }
+
+  if (isDesktop === null) return <main className="h-dvh w-full bg-black" />;
+  if (isDesktop && !cameraAnyway) {
+    return (
+      <DesktopHandoff
+        what={inspection ? `film ${inspection.property} (${kindLabel.toLowerCase()})` : "film the flat"}
+        onUseAnyway={() => setCameraAnyway(true)}
+      />
+    );
+  }
+
+  const top = (
+    <div className="flex items-center justify-between gap-2">
+      <Chip onDark onClick={() => (mode === "idle" ? openStart() : setPicker("change"))} className="min-w-0 max-w-[45%]" aria-label={`Room: ${room || "none"}. Change room`}>
+        <span className="truncate">{room || "Choose room"}</span>
+        <ChevronDownIcon className="size-4 shrink-0 opacity-70" />
+      </Chip>
+      <StatusPill tone={pill.tone} pulse={pill.pulse}>
+        {pill.text}
+      </StatusPill>
+      <IconButton onDark label="Close walkthrough" onClick={requestLeave}>
+        <CloseIcon />
+      </IconButton>
+    </div>
+  );
+
+  const bottom = (
+    <>
+      {(mode !== "idle" || roomFrames.length > 0 || uploads.failed > 0) && (
+        <div className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-2 text-sm text-white/90">
+          <span className="drop-shadow">{tally}</span>
+          {strip.length > 0 && (
+            <ul className="flex -space-x-2" aria-label="Latest marks">
+              {strip.map(({ frame, defect }) => (
+                <li key={`${frame.id}-${defect.id}`}>
+                  <DefectThumb frame={frame} defect={defect} tone={tone} />
+                </li>
+              ))}
+            </ul>
+          )}
+          {uploads.failed > 0 && (
+            <Chip tone="existing" onDark onClick={retryFailed}>
+              {uploads.failed} not uploaded · Retry
+            </Chip>
+          )}
+        </div>
+      )}
+      <div className="grid grid-cols-3 items-end">
+        <span className="flex flex-col items-center gap-1.5 justify-self-start">
+          <IconButton onDark size={56} label="Ask about what you see" onClick={openAsk}>
+            <SparkleIcon className="size-6" />
+          </IconButton>
+          <span className="text-xs font-medium text-white/85 drop-shadow">Ask</span>
+        </span>
+        <span className="justify-self-center">
+          <RoundButton
+            solid
+            size={72}
+            label={recording ? "Pause" : mode === "idle" ? "Start" : "Resume"}
+            caption={recording ? "Pause" : mode === "idle" ? "Start" : "Resume"}
+            aria-pressed={mode === "idle" ? undefined : !recording}
+            onClick={togglePause}
+          >
+            {recording ? <PauseIcon className="size-8" /> : <PlayIcon className="size-8" />}
+          </RoundButton>
+        </span>
+        <span className="justify-self-end">
+          <RoundButton
+            label="Voice note: hold to talk"
+            caption={voice === "recording" ? "Listening…" : voice === "sending" ? "Saving…" : "Hold for note"}
+            solid={voice === "recording"}
+            disabled={voice === "sending" || !room}
+            className={`touch-none ${voice === "recording" ? "scale-110" : ""}`}
+            onPointerDown={(e) => {
+              e.currentTarget.setPointerCapture(e.pointerId);
+              void voiceDown();
+            }}
+            onPointerUp={() => void voiceUp()}
+            onPointerCancel={() => void voiceUp()}
+            onKeyDown={(e) => {
+              if ((e.key === " " || e.key === "Enter") && !e.repeat) {
+                e.preventDefault();
+                void voiceDown();
+              }
+            }}
+            onKeyUp={(e) => {
+              if (e.key === " " || e.key === "Enter") {
+                e.preventDefault();
+                void voiceUp();
+              }
+            }}
+            onContextMenu={(e) => e.preventDefault()}
+          >
+            {voice === "sending" ? <Spinner className="size-5" /> : <MicIcon className="size-6" />}
+          </RoundButton>
+        </span>
+      </div>
+      {room && mode !== "idle" && (
+        <Button variant="secondary" onDark className="max-w-full self-center" onClick={doneWithRoom}>
+          <span className="truncate">Done with {room}</span>
+        </Button>
+      )}
+    </>
+  );
+
+  const sheetTitle = confirm
+    ? "Finish now?"
+    : sheet === "start"
+      ? "Which room are you in?"
+      : sheet === "next"
+        ? `${room} done. Where next?`
+        : "Change room";
+
+  const finishFooter =
+    !confirm && (sheet !== "start" || hasPhotos) ? (
+      <div className="flex flex-col gap-2">
+        <Button variant="ok" onDark size="lg" block onClick={requestFinish}>
+          Finish inspection
+        </Button>
+        {sheet === "next" && room && (
+          <Button
+            variant="ghost"
+            onDark
+            block
+            onClick={() => {
+              setDoneRooms((d) => d.filter((r) => r !== room));
+              setPicker(null);
+            }}
+          >
+            Keep filming {room}
+          </Button>
+        )}
+      </div>
+    ) : undefined;
+
+  const uploadPct = finishing && finishing.total ? (finishing.total - Math.min(finishing.total, uploads.active)) / finishing.total : 1;
+
   return (
-    <main className="relative h-dvh w-full overflow-hidden bg-black text-white select-none">
-      <video ref={videoRef} playsInline muted className="absolute inset-0 h-full w-full object-cover" />
-      {body}
-    </main>
+    <CameraStage
+      ref={camRef}
+      active={!!inspection}
+      intro={{
+        title: kind === "move_out" ? "Film your move-out" : "Film your move-in",
+        body: "We use your phone's back camera to photograph each room as you walk. Nothing is saved until you pick a room and start.",
+        action: "Turn on camera",
+      }}
+      onStatus={setCamStatus}
+      onStartTap={() => window.speechSynthesis?.speak(new SpeechSynthesisUtterance(""))}
+      outlines={stageOutlines}
+      top={top}
+      caption={captionLine && <CaptionBar key={captionLine.text} text={captionLine.text} sub={captionLine.sub} />}
+      bottom={bottom}
+    >
+      {!inspection && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center" aria-live="polite">
+          <Spinner className="size-6" />
+          <p className="text-white/75">{loadError ? "Can’t reach the server. Retrying…" : "Loading…"}</p>
+          {loadError && <p className="text-xs text-white/55">{loadError}</p>}
+        </div>
+      )}
+
+      {showCoach && <CoachOverlay title={`${kindLabel} walkthrough`} tips={coachTips} onDone={markCoachSeen} />}
+
+      {/* Room picker: start, change room, or after finishing a room */}
+      {inspection && (
+        <Sheet open={sheetOpen} onClose={closeSheet} onDark title={sheetTitle} footer={finishFooter}>
+          {confirm ? (
+            <div>
+              <p className="text-base text-white/85">
+                {confirm.empty
+                  ? "You haven’t filmed anything yet. An empty record won’t protect your deposit."
+                  : `Rooms with fewer than ${MIN_ROOM_PHOTOS} photos make weak evidence.`}
+              </p>
+              {confirm.thin.length > 0 && (
+                <ul className="mt-3 space-y-1 text-base">
+                  {confirm.thin.map((r) => (
+                    <li key={r.name} className="flex justify-between gap-3 rounded-xl bg-white/10 px-4 py-3">
+                      <span className="truncate">{r.name}</span>
+                      <span className="shrink-0 text-white/70">{plural(r.photos, "photo")}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="mt-5 flex flex-col gap-2">
+                {confirm.thin[0] ? (
+                  <Button onDark size="lg" block onClick={() => chooseRoom(confirm.thin[0].name, "record")}>
+                    <span className="truncate">Film more in {confirm.thin[0].name}</span>
+                  </Button>
+                ) : (
+                  <Button onDark size="lg" block onClick={() => setConfirm(null)}>
+                    Keep filming
+                  </Button>
+                )}
+                <Button variant="secondary" onDark block onClick={() => void finishInspection()}>
+                  Finish anyway
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <>
+              {sheet === "start" && (
+                <p className="text-sm text-white/75">
+                  {kindLabel} · {inspection.property}. Walk slowly past the walls, floor, ceiling and fittings. Photos are taken for you.
+                </p>
+              )}
+              {sheet === "start" && resumeRoom && (
+                <Button onDark size="lg" block className="mt-4" onClick={() => chooseRoom(resumeRoom, "start")}>
+                  <span className="truncate">Continue in {resumeRoom}</span>
+                </Button>
+              )}
+              <div className="mt-4 grid grid-cols-2 gap-2">
+                {roomOptions.map((r) => {
+                  const current = sheet === "change" && r.name === room;
+                  return (
+                    <Button
+                      key={r.name}
+                      variant={current ? "primary" : "secondary"}
+                      onDark
+                      className="min-w-0"
+                      aria-current={current || undefined}
+                      icon={r.done ? <CheckIcon className={`size-4 shrink-0 ${current ? "" : "text-cam-ok"}`} /> : undefined}
+                      onClick={() => pickRoom(r.name)}
+                    >
+                      <span className="truncate">{r.name}</span>
+                      {r.done && <span className="sr-only">(done)</span>}
+                      {r.photos > 0 && <span className="shrink-0 text-sm opacity-60">{r.photos}</span>}
+                    </Button>
+                  );
+                })}
+              </div>
+              {otherOpen ? (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    pickRoom(customRoom);
+                  }}
+                  className="mt-3 flex gap-2"
+                >
+                  <input
+                    autoFocus
+                    value={customRoom}
+                    onChange={(e) => setCustomRoom(e.target.value)}
+                    maxLength={40}
+                    aria-label="Room name"
+                    placeholder="e.g. Bedroom 2, Study"
+                    className="min-h-12 min-w-0 flex-1 rounded-full bg-white/10 px-4 text-base text-white outline-none placeholder:text-white/50 focus-visible:ring-2 focus-visible:ring-cam-info"
+                  />
+                  <Button type="submit" onDark disabled={!customRoom.trim()}>
+                    Go
+                  </Button>
+                </form>
+              ) : (
+                <Button variant="ghost" onDark className="-ml-3 mt-2" icon={<PlusIcon />} onClick={() => setOtherOpen(true)}>
+                  Other room
+                </Button>
+              )}
+            </>
+          )}
+        </Sheet>
+      )}
+
+      {/* Finishing: waits for uploads, then saves */}
+      <Sheet open={!!finishing} onClose={closeFinishing} onDark title="Finishing inspection">
+        {finishing && (finishing.stage === "uploading" || finishing.stage === "saving") && (
+          <div className="flex flex-col gap-3">
+            <p className="text-base">
+              {finishing.stage === "saving"
+                ? kind === "move_out"
+                  ? "Saving and starting the comparison…"
+                  : "Saving your move-in record…"
+                : !online
+                  ? `You’re offline. ${plural(uploads.active, "photo")} will upload when you’re back online.`
+                  : uploads.active
+                    ? `Uploading ${plural(uploads.active, "photo")}…`
+                    : "Finishing…"}
+            </p>
+            <Progress value={finishing.stage === "saving" ? 0.95 : uploadPct} busy={finishing.stage === "saving"} />
+            <p className="text-sm text-white/65">
+              {finishing.stage === "saving" ? "A few seconds." : online ? `About ${Math.max(2, Math.ceil(uploads.active / MAX_IN_FLIGHT) * 2)} s.` : "Keep this page open."}
+            </p>
+          </div>
+        )}
+        {finishing?.stage === "failed" && (
+          <div className="flex flex-col gap-2">
+            <p className="text-base font-semibold">{finishing.message}</p>
+            <p className="text-sm text-white/70">Check your connection and try again, or finish without them.</p>
+            <Button
+              onDark
+              block
+              className="mt-3"
+              onClick={() => {
+                retryFailed();
+                void finishInspection();
+              }}
+            >
+              Retry upload
+            </Button>
+            <Button variant="secondary" onDark block onClick={() => void finishInspection(true)}>
+              Finish without them
+            </Button>
+          </div>
+        )}
+        {finishing?.stage === "error" && (
+          <div className="flex flex-col gap-2">
+            <p className="text-base font-semibold">Couldn&rsquo;t finish the inspection.</p>
+            <p className="break-words text-sm text-white/70">{finishing.message}</p>
+            <Button onDark block className="mt-3" onClick={() => void finishInspection()}>
+              Try again
+            </Button>
+          </div>
+        )}
+      </Sheet>
+
+      {/* Leaving with uploads still pending */}
+      <Sheet
+        open={leaveOpen}
+        onClose={() => setLeaveOpen(false)}
+        onDark
+        title="Leave the walkthrough?"
+        footer={
+          <div className="flex flex-col gap-2">
+            <Button onDark block onClick={() => setLeaveOpen(false)}>
+              Keep filming
+            </Button>
+            <Button
+              variant="ghost"
+              onDark
+              block
+              onClick={() => {
+                setLeaveOpen(false);
+                router.push("/");
+              }}
+            >
+              Leave anyway
+            </Button>
+          </div>
+        }
+      >
+        <p className="text-base text-white/85">
+          {plural(unsent, "photo")} {unsent === 1 ? "hasn’t" : "haven’t"} uploaded yet. If you leave now, they may not be saved.
+        </p>
+      </Sheet>
+
+      <AskSheet open={askOpen} onClose={closeAsk} session={ask} />
+    </CameraStage>
   );
 }
 
-function Centered({ children, dim = false }: { children: ReactNode; dim?: boolean }) {
+/** Calm document screen for the non-camera states (not found, already finished). */
+function DocScreen({ title, body, ok, children }: { title: string; body: string; ok?: boolean; children?: ReactNode }) {
   return (
-    <div className={`absolute inset-0 flex items-center justify-center p-6 ${dim ? "bg-black/70" : "pointer-events-none"}`}>
-      <div className="pointer-events-auto w-full max-w-sm rounded-2xl bg-neutral-900 p-5 text-center">{children}</div>
+    <div className="flex min-h-dvh items-center">
+      <Page>
+        <Card className="sm:p-8">
+          {ok && (
+            <span className="mb-4 flex size-12 items-center justify-center rounded-full bg-ok/10 text-ok" aria-hidden>
+              <CheckIcon className="size-6" />
+            </span>
+          )}
+          <h1 className="text-xl font-semibold leading-[26px]">{title}</h1>
+          <p className="mt-1 text-base text-muted">{body}</p>
+          {children}
+        </Card>
+      </Page>
+    </div>
+  );
+}
+
+function Progress({ value, busy }: { value: number; busy?: boolean }) {
+  const pct = Math.round(Math.max(0, Math.min(1, value)) * 100);
+  return (
+    <div role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} className="h-2 w-full overflow-hidden rounded-full bg-white/15">
+      <div className={`h-full rounded-full bg-cam-info transition-[width] duration-200 ${busy ? "animate-pulse" : ""}`} style={{ width: `${pct}%` }} />
     </div>
   );
 }
 
 /** A tiny crop of the frame around the mark, with its outline; the whole frame if SAM couldn't place it. */
-function DefectThumb({ frame, defect, kind }: { frame: Frame; defect: Defect; kind: InspectionKind }) {
+function DefectThumb({ frame, defect, tone }: { frame: Frame; defect: Defect; tone: OutlineTone }) {
   const o = defect.outline;
   const box = o ? cropBox(o) : null;
+  const label = defect.description || defect.phrase;
+  const cls = "size-9 shrink-0 rounded-lg bg-black ring-2 ring-black/70";
   if (!o || !box) {
     // eslint-disable-next-line @next/next/no-img-element -- stored photo URL, tiny thumbnail
-    return <img src={frame.imageUrl} alt="" className="h-11 w-11 shrink-0 rounded-lg object-cover" />;
+    return <img src={frame.imageUrl} alt={label} title={label} className={`${cls} object-cover`} />;
   }
   return (
-    <svg viewBox={box.join(" ")} preserveAspectRatio="xMidYMid slice" className="h-11 w-11 shrink-0 rounded-lg bg-black" aria-hidden>
+    <svg viewBox={box.join(" ")} preserveAspectRatio="xMidYMid slice" className={cls} role="img" aria-label={label}>
+      <title>{label}</title>
       <image href={frame.imageUrl} x={0} y={0} width={o.width} height={o.height} preserveAspectRatio="none" />
       {o.outlines.map((p, i) => (
-        <path
-          key={`${p.id}-${i}`}
-          d={p.path}
-          transform={p.transform}
-          fill="none"
-          stroke={kind === "move_out" ? RED_STROKE : AMBER_STROKE}
-          strokeWidth={2}
-          vectorEffect="non-scaling-stroke"
-        />
+        <path key={`${p.id}-${i}`} d={p.path} transform={p.transform} className={outlineClass(tone)} strokeWidth={2} vectorEffect="non-scaling-stroke" />
       ))}
     </svg>
   );
@@ -912,18 +1171,10 @@ function roomKey(id: string) {
   return `dg.room.${id}`;
 }
 
-function plural(n: number, word: string) {
-  return `${n} ${n === 1 ? word : `${word}s`}`;
-}
-
 function clamp(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(Math.max(lo, hi), v));
 }
 
 function round(n: number) {
   return Math.round(n * 10) / 10;
-}
-
-function short(err: unknown): string {
-  return (err instanceof Error ? err.message : String(err)).slice(0, 160);
 }

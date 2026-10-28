@@ -1,42 +1,51 @@
+import { ShieldIcon } from "@/components/ui/icons";
 import { formatDate } from "./format";
-import { PrintButton } from "./PrintButton";
 
+/** Brand mark, document title, the flat and the tenancy dates. Every field is optional (loading / not-found states). */
 export function ReportHeader({
   property,
   city,
   moveInAt,
   moveOutAt,
-  reportId,
 }: {
-  property: string;
-  city: string;
-  moveInAt: number;
-  moveOutAt: number;
-  reportId: string;
+  property?: string;
+  city?: string;
+  moveInAt?: number;
+  moveOutAt?: number;
 }) {
   return (
-    <header className="border-b border-(--line) pb-6">
-      <div className="flex items-center justify-between gap-4">
-        <p className="text-sm font-semibold tracking-wide text-(color:--muted)">Deposit Guard</p>
-        <PrintButton />
+    <header className="pb-6">
+      <div className="flex items-center gap-2.5">
+        <span className="grid size-8 place-items-center rounded-lg bg-ink text-paper">
+          <ShieldIcon className="size-[18px]" />
+        </span>
+        <span className="font-semibold tracking-tight">Deposit Guard</span>
       </div>
-      <h1 className="mt-6 text-3xl font-semibold tracking-tight text-balance sm:text-4xl print:mt-2">
-        Deposit inspection report
-      </h1>
-      <p className="mt-3 text-xl leading-snug">{property || "Property"}</p>
-      {city && <p className="text-lg text-(color:--muted)">{city}</p>}
-      <dl className="mt-5 flex flex-wrap gap-x-8 gap-y-3 text-base">
-        <div>
-          <dt className="text-sm text-(color:--muted)">Tenancy</dt>
-          <dd className="tabular-nums">
-            {formatDate(moveInAt)} <span aria-label="to">→</span> {formatDate(moveOutAt)}
-          </dd>
-        </div>
-        <div className="min-w-0">
-          <dt className="text-sm text-(color:--muted)">Report ID</dt>
-          <dd className="font-mono text-sm break-all">{reportId}</dd>
-        </div>
-      </dl>
+
+      <h1 className="mt-6 text-[28px] leading-[34px] font-semibold tracking-tight">Deposit inspection report</h1>
+      {property && <p className="mt-1.5 text-lg leading-snug font-medium text-balance">{property}</p>}
+
+      {(city || moveInAt) && (
+        <p className="mt-1.5 text-sm leading-relaxed text-muted">
+          {city}
+          {city && moveInAt ? " · " : null}
+          {moveInAt ? (
+            <span className="whitespace-nowrap">
+              Move-in <span className="font-medium text-ink">{formatDate(moveInAt)}</span>
+            </span>
+          ) : null}
+          {moveInAt && moveOutAt ? (
+            <>
+              {" "}
+              <span aria-hidden>→</span>
+              <span className="sr-only">to</span>{" "}
+              <span className="whitespace-nowrap">
+                Move-out <span className="font-medium text-ink">{formatDate(moveOutAt)}</span>
+              </span>
+            </>
+          ) : null}
+        </p>
+      )}
     </header>
   );
 }

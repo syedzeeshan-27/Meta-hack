@@ -1,60 +1,54 @@
 import type { ReactNode } from "react";
+import { Spinner } from "@/components/ui/Button";
+import { Card, Page } from "@/components/ui/Card";
+import { AlertIcon, ShieldIcon } from "@/components/ui/icons";
 
-// Colour tokens for the report, set once here: light, dark and print. Components use
-// bg-(--card), text-(color:--muted), border-(--line) etc., so a later redesign changes one place.
-// Print forces black-on-white whatever the screen theme is.
-const THEME = [
-  "[--paper:var(--color-stone-50)] [--card:var(--color-white)] [--ink:var(--color-stone-900)]",
-  "[--muted:var(--color-stone-600)] [--line:var(--color-stone-200)] [--link:var(--color-blue-700)]",
-  "[--new:var(--color-red-700)] [--new-soft:var(--color-red-50)]",
-  "[--old:var(--color-amber-700)] [--old-soft:var(--color-amber-50)]",
-  "[--ok:var(--color-emerald-700)] [--ok-soft:var(--color-emerald-50)]",
-  "dark:[--paper:var(--color-stone-950)] dark:[--card:var(--color-stone-900)] dark:[--ink:var(--color-stone-100)]",
-  "dark:[--muted:var(--color-stone-400)] dark:[--line:var(--color-stone-800)] dark:[--link:var(--color-blue-300)]",
-  "dark:[--new:var(--color-red-400)] dark:[--new-soft:var(--color-red-950)]",
-  "dark:[--old:var(--color-amber-400)] dark:[--old-soft:var(--color-amber-950)]",
-  "dark:[--ok:var(--color-emerald-400)] dark:[--ok-soft:var(--color-emerald-950)]",
-  "print:[--paper:#fff] print:[--card:#fff] print:[--ink:#000] print:[--muted:var(--color-stone-700)]",
-  "print:[--line:var(--color-stone-300)] print:[--link:#000] print:[--new:var(--color-red-800)]",
-  "print:[--new-soft:#fff] print:[--old:var(--color-amber-800)] print:[--old-soft:#fff]",
-  "print:[--ok:var(--color-emerald-800)] print:[--ok-soft:#fff]",
-  // The root layout paints the body black for the camera app; the report is a light document.
-  "[body:has(&)]:bg-stone-50 dark:[body:has(&)]:bg-stone-950 print:[body:has(&)]:bg-white",
-  "[:root:has(&)]:[color-scheme:light_dark] print:[:root:has(&)]:[color-scheme:light]",
-].join(" ");
+// Paper is always light: A4 with the light-theme tokens, whatever the screen theme is. `html:root` outranks the
+// dark-mode `:root` rule in globals.css. Colours are printed as shown (tags, outlines, the verdict panel).
+const PRINT_CSS = `@page{size:A4;margin:14mm 14mm 16mm}
+@media print{
+html:root{color-scheme:light;--paper:#fff;--surface:#fff;--ink:#16171a;--muted:#4b5057;--line:#d6d3cd;--info:#0f766e;--existing:#b45309;--new:#c62828;--ok:#15803d}
+[data-report]{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}`;
 
+/** The report's document column: 768px, centred; full width on paper. */
 export function ReportShell({ children }: { children: ReactNode }) {
   return (
-    <div data-report className={`${THEME} min-h-dvh bg-(--paper) text-(color:--ink) print:min-h-0`}>
-      <div className="mx-auto w-full max-w-3xl px-4 pt-6 pb-16 sm:px-6 sm:pt-10 print:max-w-none print:px-0 print:pt-0 print:pb-0">
-        {children}
-      </div>
-    </div>
+    <Page wide className="print:max-w-none print:px-0 print:pt-0 print:pb-0">
+      <style href="deposit-report-print" precedence="default">
+        {PRINT_CSS}
+      </style>
+      <div data-report>{children}</div>
+    </Page>
   );
 }
 
-/** Full-width message for the not-found / waiting states. */
+type PanelIcon = "busy" | "alert" | "info";
+
+/** Not found / waiting / info states. Neutral on purpose: red and amber only ever mean damage. */
 export function StatusPanel({
   title,
+  icon = "info",
+  action,
   children,
-  busy = false,
 }: {
   title: string;
+  icon?: PanelIcon;
+  action?: ReactNode;
   children?: ReactNode;
-  busy?: boolean;
 }) {
   return (
-    <section className="mt-10 rounded-2xl border border-(--line) bg-(--card) p-6 sm:p-8" aria-live="polite">
-      <div className="flex items-center gap-3">
-        {busy && (
-          <span
-            aria-hidden
-            className="size-5 shrink-0 animate-spin rounded-full border-2 border-(--line) border-t-(--ink) motion-reduce:animate-none"
-          />
-        )}
-        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+    <Card aria-live="polite">
+      <div className="flex items-start gap-3">
+        <span className="grid size-10 shrink-0 place-items-center rounded-full bg-ink/5">
+          {icon === "busy" ? <Spinner className="size-5" /> : icon === "alert" ? <AlertIcon /> : <ShieldIcon />}
+        </span>
+        <div className="min-w-0 flex-1 pt-1.5">
+          <h2 className="text-xl leading-[26px] font-semibold">{title}</h2>
+          {children && <div className="mt-1.5 space-y-2 leading-relaxed text-muted">{children}</div>}
+          {action && <div className="mt-5">{action}</div>}
+        </div>
       </div>
-      {children && <div className="mt-3 space-y-2 text-lg leading-relaxed text-(color:--muted)">{children}</div>}
-    </section>
+    </Card>
   );
 }

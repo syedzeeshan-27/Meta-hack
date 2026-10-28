@@ -1,14 +1,21 @@
 "use client";
 
+// Step-by-step guide over the camera (the old chair flow; reached from Ask when someone says
+// "help me assemble this", and from the hidden /guide page). Uses the shared CameraStage.
+
 import { useEffect, useRef, useState } from "react";
 import type { Guide, Outline } from "@/lib/types";
 import { startRecording, type WavRecorder } from "@/lib/wav-recorder";
+import CameraStage, { type CameraHandle, type CameraStatus, type StageOutline } from "@/components/camera/CameraStage";
+import { RoundButton } from "@/components/camera/RoundButton";
+import type { OutlineTone } from "@/components/camera/outlines";
+import { Button, CloseIcon, IconButton, MicIcon, Spinner } from "@/components/ui";
 
-const MAX_FRAME_WIDTH = 1280;
+const MAX_FRAME_SIDE = 1280;
 
 type Frame = { image: string; width: number; height: number };
-/** Outlines on screen: cyan = "here it is", red = "this is wrong", green = "parts I counted". */
-type Overlay = { width: number; height: number; outlines: Outline[]; tone: "show" | "problem" | "parts" };
+/** Outlines on screen: info = "here it is", new = "this is wrong", ok = "parts I counted". */
+type Overlay = { width: number; height: number; outlines: Outline[]; tone: OutlineTone };
 type Busy = "" | "listening" | "thinking" | "looking" | "checking";
 
 type SegmentResult = { width: number; height: number; outlines: Outline[]; via: string; ms: number; error?: string };
@@ -35,45 +42,38 @@ type CheckResult = {
 export default function CameraView({ guide, onExit }: { guide: Guide; onExit: () => void }) {
   const steps = guide.steps;
   const hasSteps = steps.length > 0;
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const camRef = useRef<CameraHandle>(null);
   const recorderRef = useRef<WavRecorder | null>(null);
-  const [live, setLive] = useState(false);
+  const overlayIdRef = useRef(0);
+  const [started, setStarted] = useState(false);
+  const [camStatus, setCamStatus] = useState<CameraStatus>("idle");
   const [stepIndex, setStepIndex] = useState(0);
-  const [overlay, setOverlay] = useState<Overlay | null>(null);
+  const [overlay, setOverlay] = useState<(Overlay & { key: string }) | null>(null);
   const [busy, setBusy] = useState<Busy>("");
   const [heard, setHeard] = useState("");
   const [answer, setAnswer] = useState(hasSteps ? "Tap start and point your camera at it." : "Tap start, point at anything and ask.");
   const [reference, setReference] = useState<string | null>(null);
 
+  const live = camStatus === "live";
   const step = hasSteps ? steps[stepIndex] : null;
   const isLast = hasSteps && stepIndex === steps.length - 1;
 
-  async function startCamera() {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
-        audio: false,
-      });
-      const video = videoRef.current!;
-      video.srcObject = stream;
-      await video.play();
-      setLive(true);
-      if (step) say(step.instruction);
-      else say("I'm looking. Hold the button and ask me anything.");
-    } catch (err) {
-      setAnswer(`Camera blocked: ${String(err)}`);
-    }
+  function start() {
+    setStarted(true);
+    // Said inside the tap, so iOS lets it play.
+    if (step) say(step.instruction);
+    else say("I'm looking. Hold the button and ask me anything.");
   }
 
-  /** Grab the current camera frame as a JPEG data URL, capped at MAX_FRAME_WIDTH. */
+  function show(o: Overlay | null) {
+    setOverlay(o && { ...o, key: `cv-${++overlayIdRef.current}` });
+  }
+
+  /** The current camera frame as a JPEG data URL, longest side capped at MAX_FRAME_SIDE. */
   function captureFrame(): Frame {
-    const video = videoRef.current!;
-    const scale = Math.min(1, MAX_FRAME_WIDTH / video.videoWidth);
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(video.videoWidth * scale);
-    canvas.height = Math.round(video.videoHeight * scale);
-    canvas.getContext("2d")!.drawImage(video, 0, 0, canvas.width, canvas.height);
-    return { image: canvas.toDataURL("image/jpeg", 0.85), width: canvas.width, height: canvas.height };
+    const frame = camRef.current?.captureFrame(MAX_FRAME_SIDE, 0.85);
+    if (!frame) throw new Error("The camera isn't ready yet.");
+    return frame;
   }
 
   function say(text: string) {
@@ -85,7 +85,7 @@ export default function CameraView({ guide, onExit }: { guide: Guide; onExit: ()
     if (!hasSteps) return;
     const next = Math.max(0, Math.min(steps.length - 1, i));
     setStepIndex(next);
-    setOverlay(null);
+    show(null);
     say(steps[next].instruction);
   }
 
@@ -111,34 +111,34 @@ export default function CameraView({ guide, onExit }: { guide: Guide; onExit: ()
   const showMe = () =>
     run("looking", async () => {
       if (!step) return;
-      setOverlay(null);
+      show(null);
       const data = await post<SegmentResult>("/api/segment", { ...captureFrame(), phrase: step.part });
       if (data.outlines.length) {
-        setOverlay({ ...data, tone: "show" });
+        show({ ...data, tone: "info" });
         setAnswer(`That's the ${step.part}.`);
       } else say(`I can't spot the ${step.part}. Try moving a little closer.`);
     });
 
   const checkThisStep = () =>
     run("checking", async () => {
-      setOverlay(null);
+      show(null);
       const data = await post<CheckResult>("/api/check", { kind: "step", frame: captureFrame(), guide, stepIndex });
-      if (data.problem) setOverlay({ ...data.problem, tone: "problem" });
+      if (data.problem) show({ ...data.problem, tone: "new" });
       say(data.say);
     });
 
   const checkParts = () =>
     run("checking", async () => {
-      setOverlay(null);
+      show(null);
       const data = await post<CheckResult>("/api/check", { kind: "parts", frame: captureFrame(), guide });
       const all = data.outlines ?? [];
-      if (all.length) setOverlay({ width: all[0].width, height: all[0].height, outlines: all.flatMap((o) => o.outlines), tone: "parts" });
+      if (all.length) show({ width: all[0].width, height: all[0].height, outlines: all.flatMap((o) => o.outlines), tone: "ok" });
       say(data.say);
     });
 
   const finalCheck = () =>
     run("checking", async () => {
-      setOverlay(null);
+      show(null);
       setAnswer("Drawing how it should look, then comparing… (about 15 seconds)");
       const data = await post<CheckResult>("/api/check", { kind: "final", frame: captureFrame(), guide });
       if (data.reference) setReference(data.reference);
@@ -160,10 +160,10 @@ export default function CameraView({ guide, onExit }: { guide: Guide; onExit: ()
     const recorder = recorderRef.current;
     if (!recorder) return;
     recorderRef.current = null;
-    // Grab the frame at the moment they finish speaking: that's what they're asking about.
-    const frame = captureFrame();
     setBusy("thinking");
     try {
+      // Grab the frame at the moment they finish speaking: that's what they're asking about.
+      const frame = captureFrame();
       const wav = await recorder.stop();
       const res = await fetch("/api/transcribe", { method: "POST", headers: { "Content-Type": "audio/wav" }, body: wav });
       const heardData = (await res.json()) as { transcript?: string; error?: string };
@@ -178,9 +178,9 @@ export default function CameraView({ guide, onExit }: { guide: Guide; onExit: ()
       const reply = await post<AskResult>("/api/ask", { question, frame, guide, stepIndex });
       if (reply.goToStep !== undefined && reply.goToStep !== stepIndex) {
         setStepIndex(reply.goToStep);
-        setOverlay(null);
+        show(null);
       }
-      if (reply.outline?.outlines.length) setOverlay({ ...reply.outline, tone: "show" });
+      if (reply.outline?.outlines.length) show({ ...reply.outline, tone: "info" });
       say(reply.say);
     } catch (err) {
       say(`Didn't catch that. ${String(err).slice(0, 120)}`);
@@ -199,120 +199,125 @@ export default function CameraView({ guide, onExit }: { guide: Guide; onExit: ()
     checking: "Checking…",
   };
 
-  return (
-    <main className="relative h-dvh w-full overflow-hidden bg-black select-none">
-      <video ref={videoRef} playsInline muted className="absolute inset-0 h-full w-full object-cover" />
+  const stageOutlines: StageOutline[] | undefined = overlay ? [overlay] : undefined;
 
-      {overlay && (
-        <svg
-          className="pointer-events-none absolute inset-0 h-full w-full"
-          viewBox={`0 0 ${overlay.width} ${overlay.height}`}
-          preserveAspectRatio="xMidYMid slice"
-        >
-          {overlay.outlines.map((o, i) => (
-            <path
-              key={`${o.id}-${i}`}
-              d={o.path}
-              transform={o.transform}
-              className={`part-outline ${overlay.tone === "problem" ? "tone-problem" : overlay.tone === "parts" ? "tone-parts" : ""}`}
-              vectorEffect="non-scaling-stroke"
-              strokeWidth={4}
-            />
-          ))}
-        </svg>
-      )}
-
-      {/* Step / answer card */}
-      <section className="absolute inset-x-0 top-0 p-4 pt-[max(1rem,env(safe-area-inset-top))]">
-        <div className="rounded-2xl bg-black/70 p-4 backdrop-blur">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-xs font-medium uppercase tracking-wider text-cyan-300">
-              {hasSteps ? `Step ${stepIndex + 1} of ${steps.length}` : guide.product || "Ask anything"}
-            </p>
-            <div className="flex items-center gap-3 text-xs text-white/60">
-              {hasSteps && (
-                <>
-                  <button onClick={() => goTo(stepIndex - 1)} disabled={stepIndex === 0} className="disabled:opacity-30">
-                    ‹ Prev
-                  </button>
-                  <button onClick={() => goTo(stepIndex + 1)} disabled={isLast} className="disabled:opacity-30">
-                    Next ›
-                  </button>
-                </>
-              )}
-              <button onClick={onExit} className="underline-offset-2 hover:underline">
-                Close
-              </button>
-            </div>
-          </div>
-          {step && <p className="mt-1 text-lg leading-snug">{step.instruction}</p>}
-          <p className={`mt-2 text-sm ${step ? "text-white/70" : "text-base text-white"}`}>
-            {heard && <span className="text-white/50">You: &ldquo;{heard}&rdquo;<br /></span>}
-            {busy ? busyLabel[busy] : answer}
-          </p>
-          {live && hasSteps && (
-            <div className="mt-3 flex gap-2">
-              {stepIndex === 0 && guide.parts.length > 0 && (
-                <button onClick={checkParts} disabled={!!busy} className="rounded-full bg-white/15 px-3 py-1.5 text-xs disabled:opacity-40">
-                  Check my parts
-                </button>
-              )}
-              {isLast && (
-                <button onClick={finalCheck} disabled={!!busy} className="rounded-full bg-white/15 px-3 py-1.5 text-xs disabled:opacity-40">
-                  Final check
-                </button>
-              )}
-            </div>
+  // Step / answer card
+  const top = (
+    <div className="rounded-2xl bg-black/80 p-4 backdrop-blur">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold uppercase tracking-wider text-cam-info">
+          {hasSteps ? `Step ${stepIndex + 1} of ${steps.length}` : guide.product || "Ask anything"}
+        </p>
+        <div className="flex items-center gap-1">
+          {hasSteps && (
+            <>
+              <Button variant="ghost" onDark onClick={() => goTo(stepIndex - 1)} disabled={stepIndex === 0}>
+                ‹ Prev
+              </Button>
+              <Button variant="ghost" onDark onClick={() => goTo(stepIndex + 1)} disabled={isLast}>
+                Next ›
+              </Button>
+            </>
+          )}
+          <IconButton onDark size={40} label="Close the step guide" onClick={onExit}>
+            <CloseIcon />
+          </IconButton>
+        </div>
+      </div>
+      {step && <p className="mt-1 text-lg leading-snug">{step.instruction}</p>}
+      <p aria-live="polite" className={`mt-2 ${step ? "text-sm text-white/75" : "text-base text-white"}`}>
+        {heard && (
+          <span className="text-white/60">
+            You: &ldquo;{heard}&rdquo;
+            <br />
+          </span>
+        )}
+        {busy ? busyLabel[busy] : answer}
+      </p>
+      {live && hasSteps && ((stepIndex === 0 && guide.parts.length > 0) || isLast) && (
+        <div className="mt-3 flex gap-2">
+          {stepIndex === 0 && guide.parts.length > 0 && (
+            <Button variant="secondary" onDark onClick={checkParts} disabled={!!busy}>
+              Check my parts
+            </Button>
+          )}
+          {isLast && (
+            <Button variant="secondary" onDark onClick={finalCheck} disabled={!!busy}>
+              Final check
+            </Button>
           )}
         </div>
-      </section>
+      )}
+    </div>
+  );
+
+  const bottom = (
+    <div className="grid grid-cols-3 items-end">
+      <span className="justify-self-start">
+        {hasSteps && (
+          <Button variant="secondary" onDark onClick={checkThisStep} disabled={!!busy || !live}>
+            Done?
+          </Button>
+        )}
+      </span>
+      <span className="justify-self-center">
+        <RoundButton
+          solid
+          size={72}
+          label="Hold to talk"
+          caption={busy === "listening" ? "Listening…" : busy === "thinking" ? "Thinking…" : "Hold to talk"}
+          className={`touch-none ${busy === "listening" ? "scale-110" : ""}`}
+          disabled={!live}
+          onPointerDown={startTalking}
+          onPointerUp={stopTalking}
+          onPointerLeave={stopTalking}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          {busy === "thinking" ? <Spinner className="size-6" /> : <MicIcon className="size-7" />}
+        </RoundButton>
+      </span>
+      <span className="justify-self-end">
+        {hasSteps && (
+          <Button onDark onClick={showMe} disabled={!!busy || !live}>
+            Show me
+          </Button>
+        )}
+      </span>
+    </div>
+  );
+
+  return (
+    <CameraStage ref={camRef} active={started} explain={false} onStatus={setCamStatus} outlines={stageOutlines} top={top} bottom={bottom}>
+      {!started && (
+        <section className="absolute inset-0 z-10 flex items-center justify-center bg-black px-6 pb-[max(2rem,env(safe-area-inset-bottom))] pt-[max(2rem,env(safe-area-inset-top))]">
+          <div className="flex w-full max-w-sm flex-col gap-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-cam-info">
+              {hasSteps ? `${steps.length} steps` : "Ask anything"}
+            </p>
+            <h1 className="text-[28px] font-semibold leading-[34px]">{guide.product || "Step by step"}</h1>
+            {step && <p className="text-base text-white/75">First: {step.instruction}</p>}
+            <Button onDark size="lg" block onClick={start}>
+              Start
+            </Button>
+            <Button variant="ghost" onDark block onClick={onExit}>
+              Back
+            </Button>
+          </div>
+        </section>
+      )}
 
       {/* What it should look like (final check) */}
       {reference && (
-        <button onClick={() => setReference(null)} className="absolute bottom-36 right-4 w-32 overflow-hidden rounded-xl border-2 border-cyan-300 shadow-lg">
+        <button
+          onClick={() => setReference(null)}
+          className="absolute bottom-40 right-4 w-32 overflow-hidden rounded-xl border-2 border-cam-info shadow-lg"
+        >
           {/* eslint-disable-next-line @next/next/no-img-element -- generated data URL */}
           <img src={reference} alt="How it should look" className="block w-full" />
-          <span className="block bg-black/80 py-1 text-center text-[10px]">How it should look · tap to close</span>
+          <span className="block bg-black/80 py-1 text-center text-xs">How it should look · tap to close</span>
         </button>
       )}
-
-      {/* Controls */}
-      <section className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-3 p-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
-        {!live ? (
-          <button onClick={startCamera} className="w-full rounded-full bg-cyan-400 py-4 text-lg font-semibold text-black">
-            Start
-          </button>
-        ) : (
-          <>
-            {hasSteps ? (
-              <button onClick={checkThisStep} disabled={!!busy} className="rounded-full bg-white/15 px-5 py-4 font-medium disabled:opacity-40">
-                Done?
-              </button>
-            ) : (
-              <span className="w-20" />
-            )}
-            <button
-              onPointerDown={startTalking}
-              onPointerUp={stopTalking}
-              onPointerLeave={stopTalking}
-              onContextMenu={(e) => e.preventDefault()}
-              className={`h-20 w-20 shrink-0 touch-none rounded-full text-sm font-semibold transition ${
-                busy === "listening" ? "scale-110 bg-red-500 text-white" : "bg-white text-black"
-              }`}
-            >
-              {busy === "listening" ? "Listening" : busy === "thinking" ? "…" : "Hold to talk"}
-            </button>
-            {hasSteps ? (
-              <button onClick={showMe} disabled={!!busy} className="rounded-full bg-cyan-400 px-5 py-4 font-semibold text-black disabled:opacity-40">
-                Show me
-              </button>
-            ) : (
-              <span className="w-20" />
-            )}
-          </>
-        )}
-      </section>
-    </main>
+    </CameraStage>
   );
 }
 

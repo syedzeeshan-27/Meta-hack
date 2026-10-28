@@ -1,14 +1,25 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
+import { AlertIcon } from "@/components/ui/icons";
 
 /**
  * Re-renders the server page every few seconds while the comparison is still running.
  * With `inspectionId`, it also asks the comparison route how the run is going, so a failed run
- * shows "Try again" instead of "Analysing…" forever.
+ * shows "Try again" (in place of `children`, the waiting panel) instead of "Analysing…" forever.
  */
-export function AutoRefresh({ everyMs = 3000, inspectionId }: { everyMs?: number; inspectionId?: string }) {
+export function AutoRefresh({
+  everyMs = 3000,
+  inspectionId,
+  children,
+}: {
+  everyMs?: number;
+  inspectionId?: string;
+  children?: ReactNode;
+}) {
   const router = useRouter();
   const [failed, setFailed] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
@@ -45,18 +56,24 @@ export function AutoRefresh({ everyMs = 3000, inspectionId }: { everyMs?: number
     }
   }
 
-  if (!failed) return null;
+  if (!failed) return <>{children}</>;
   return (
-    <div className="mx-auto mt-4 max-w-md rounded-xl border border-red-300 bg-red-50 p-4 text-sm text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-100 print:hidden">
-      <p className="font-medium">The comparison didn&rsquo;t finish.</p>
-      <p className="mt-1 opacity-80">{failed}</p>
-      <button
-        onClick={retry}
-        disabled={retrying}
-        className="mt-3 rounded-full bg-red-600 px-4 py-2 font-medium text-white disabled:opacity-50"
-      >
-        {retrying ? "Running again… (up to a few minutes)" : "Try again"}
-      </button>
-    </div>
+    <Card role="alert" className="print:hidden">
+      <div className="flex items-start gap-3">
+        <span className="grid size-10 shrink-0 place-items-center rounded-full bg-ink/5">
+          <AlertIcon />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-xl leading-[26px] font-semibold">The comparison didn&rsquo;t finish</h2>
+          <p className="mt-1 text-muted">
+            The photos are saved, so nothing is lost. Running it again usually takes about a minute.
+          </p>
+          <p className="mt-2 text-sm break-words text-muted">Details: {failed}</p>
+          <Button onClick={retry} loading={retrying} className="mt-5 w-full sm:w-auto">
+            {retrying ? "Running again…" : "Try again"}
+          </Button>
+        </div>
+      </div>
+    </Card>
   );
 }

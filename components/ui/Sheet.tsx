@@ -16,6 +16,7 @@ export function Sheet({
   footer,
   onDark,
   size = "md",
+  scrim = "dim",
 }: {
   open: boolean;
   onClose: () => void;
@@ -24,6 +25,8 @@ export function Sheet({
   footer?: ReactNode;
   onDark?: boolean;
   size?: "md" | "half";
+  /** "clear" keeps what's behind visible (e.g. the camera and its outlines under Ask). */
+  scrim?: "dim" | "clear";
 }) {
   const panel = useRef<HTMLDivElement>(null);
 
@@ -45,7 +48,7 @@ export function Sheet({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6" role="presentation">
-      <div className="anim-fade absolute inset-0 bg-black/50" onClick={onClose} aria-hidden />
+      <div className={`anim-fade absolute inset-0 ${scrim === "clear" ? "bg-transparent" : "bg-black/50"}`} onClick={onClose} aria-hidden />
       <div
         ref={panel}
         tabIndex={-1}
@@ -59,7 +62,7 @@ export function Sheet({
         <div className="mx-auto mt-2 h-1 w-10 rounded-full bg-current opacity-20 sm:hidden" aria-hidden />
         <div className="flex items-center justify-between gap-3 px-5 pb-1 pt-3">
           <h2 className="text-lg font-semibold">{title}</h2>
-          <IconButton label="Close" onDark={onDark} size={40} onClick={onClose}>
+          <IconButton label="Close" onDark={onDark} size={48} onClick={onClose}>
             <CloseIcon />
           </IconButton>
         </div>

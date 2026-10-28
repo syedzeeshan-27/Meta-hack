@@ -17,12 +17,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     timer.current = setTimeout(() => setToast(null), 3500);
   }, []);
 
-  const toneClass: Record<Tone, string> = {
-    neutral: "bg-neutral-900 text-white",
-    info: "bg-neutral-900 text-white",
-    existing: "bg-amber-950 text-amber-100",
-    new: "bg-red-950 text-red-100",
-    ok: "bg-green-950 text-green-100",
+  const dot: Record<Tone, string> = {
+    neutral: "bg-white/60",
+    info: "bg-cam-info",
+    existing: "bg-cam-existing",
+    new: "bg-cam-new",
+    ok: "bg-cam-ok",
   };
 
   return (
@@ -30,13 +30,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
       <div
         aria-live="polite"
-        className="pointer-events-none fixed inset-x-0 bottom-[max(1.25rem,env(safe-area-inset-bottom))] z-[60] flex justify-center px-4"
+        className="pointer-events-none fixed inset-x-0 top-[max(1rem,env(safe-area-inset-top))] z-[60] flex justify-center px-4"
       >
         {toast && (
           <div
             key={toast.id}
-            className={`anim-sheet max-w-md rounded-full px-5 py-3 text-sm font-medium shadow-lg ${toneClass[toast.tone]}`}
+            className="anim-sheet flex max-w-md items-center gap-2.5 rounded-full bg-neutral-900 px-5 py-3 text-sm font-medium text-white shadow-lg"
           >
+            <span className={`size-2 shrink-0 rounded-full ${dot[toast.tone]}`} aria-hidden />
             {toast.text}
           </div>
         )}

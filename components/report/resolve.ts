@@ -1,5 +1,6 @@
 // Joins comparison findings to the photos and defects they point at.
 import type { Comparison, Defect, Finding, Frame, Inspection } from "@/lib/inspect/types";
+import { clause } from "./format";
 
 export type Shot = { frame: Frame; room: string; defect?: Defect };
 export type ResolvedFinding = Finding & { beforeShot?: Shot; afterShot?: Shot };
@@ -34,5 +35,16 @@ export function roomOrder(moveIn: Inspection, moveOut: Inspection, comparison: C
   return [...new Set(names)];
 }
 
-export const photoCount = (inspection: Inspection, room: string) =>
-  inspection.rooms.filter((r) => r.name === room).reduce((n, r) => n + r.frames.length, 0);
+/** Stable sort by room, so each room's findings sit together (print breaks the page between rooms). */
+export function sortByRoom<T extends { room: string }>(items: T[], rooms: string[]): T[] {
+  const index = new Map(rooms.map((r, i) => [r, i]));
+  return [...items].sort((a, b) => (index.get(a.room) ?? rooms.length) - (index.get(b.room) ?? rooms.length));
+}
+
+export const frameCount = (inspection: Inspection) => inspection.rooms.reduce((n, r) => n + r.frames.length, 0);
+
+/** "Bedroom at move-out: crack near switchboard, outlined" */
+export function photoAlt(room: string, when: "move-in" | "move-out", defect?: Defect, clean = false): string {
+  if (defect) return `${room} at ${when}: ${clause(defect.description)}${defect.outline ? ", outlined" : ""}`;
+  return clean ? `${room} at ${when}: the same spot, nothing marked` : `${room} at ${when}`;
+}

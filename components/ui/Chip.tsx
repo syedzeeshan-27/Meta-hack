@@ -24,7 +24,7 @@ export function chipClass(tone: Tone = "neutral", onDark = false) {
   }`;
 }
 
-/** Small rounded tag. Pass onClick to make it a button (it then gets a 44px-tall hit area). */
+/** Small rounded tag. Pass onClick to make it a button (it then gets a 48px-tall hit area). */
 export function Chip({
   tone = "neutral",
   onDark,
@@ -44,7 +44,7 @@ export function Chip({
     );
   }
   return (
-    <button {...rest} onClick={onClick} className={`${cls} relative after:absolute after:-inset-y-1.5 after:inset-x-0`}>
+    <button {...rest} onClick={onClick} className={`${cls} relative after:absolute after:-inset-y-2 after:inset-x-0`}>
       {icon}
       {children}
     </button>

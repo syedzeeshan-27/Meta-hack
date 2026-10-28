@@ -3,7 +3,7 @@ import Home from "@/components/Home";
 
 export const metadata: Metadata = {
   title: "Deposit Guard",
-  description: "Film your flat at move-in and move-out. Only new damage counts against your deposit.",
+  description: "Proof of your flat's condition, so your deposit comes back.",
 };
 
 export default function HomePage() {
