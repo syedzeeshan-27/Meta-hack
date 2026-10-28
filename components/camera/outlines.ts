@@ -1,5 +1,5 @@
 // Outline tones map straight onto the classes in app/globals.css.
-// info = "here it is" (Ask), existing = already there at move-in, new = new damage, ok = fine / done.
+// info = "here it is", existing = caution, new = something wrong or unsafe, ok = fine / done.
 
 export type OutlineTone = "info" | "existing" | "new" | "ok";
 

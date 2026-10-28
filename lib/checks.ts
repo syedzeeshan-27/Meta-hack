@@ -1,10 +1,8 @@
-// The three checks: is this step done, are all the parts here, and does the finished thing look right.
-import type { Frame } from "./agent";
+// Is this step done? Spark judges the camera frame against the step's "done when"; if something's
+// wrong, the part at fault is outlined so the person can see exactly what to fix.
 import { locatePart, type Located } from "./locate";
-import { image, sam, spark } from "./meta";
-import type { Guide, PartItem, Step } from "./types";
-
-// ---------- Is this step done? ----------
+import { spark } from "./meta";
+import type { Frame, Step } from "./types";
 
 export type StepCheck = {
   done: boolean;
@@ -13,7 +11,7 @@ export type StepCheck = {
   problem?: Located & { phrase: string };
 };
 
-export async function checkStep(frame: Frame, step: Step, product: string): Promise<StepCheck> {
+export async function checkStep(frame: Frame, step: Step, product: string, said = ""): Promise<StepCheck> {
   const verdict = await spark<{ done: boolean; say: string; problem_part: string }>(
     [
       {
@@ -22,11 +20,16 @@ export async function checkStep(frame: Frame, step: Step, product: string): Prom
           {
             type: "text",
             text:
-              `Someone is assembling a ${product}. The step was: "${step.instruction}". ` +
+              `Someone is repairing a ${product}, with their phone camera on it. The step was: "${step.instruction}". ` +
               `It's done correctly when: ${step.check ?? "the step is complete"}. ` +
-              "Look at the photo. Is the step done correctly? Judge only what you can see. " +
-              "say = one or two short spoken sentences: confirm it, or say exactly what to fix. " +
-              "problem_part = 1-3 plain words for the part that's wrong, or empty string if it's fine.",
+              (said ? `They just said: "${said}". ` : "") +
+              "Look at the photo. Is the step done correctly? Judge what you can see; if the photo can't show it " +
+              "(a sound, a temperature, something out of view), go by what they said unless the photo contradicts it. " +
+              (step.gate
+                ? "This is a SAFETY checkpoint: only say done when the photo clearly shows it. When in doubt, it's not done. "
+                : "") +
+              "say = one or two short spoken sentences: confirm it, or say exactly what to fix or what to show. " +
+              "problem_part = 1-3 plain words for the visible part that's wrong, or empty string.",
           },
           { type: "image_url", image_url: { url: frame.image } },
         ],
@@ -52,80 +55,4 @@ export async function checkStep(frame: Frame, step: Step, product: string): Prom
     if (found.outlines.length) result.problem = { ...found, phrase: verdict.problem_part.trim() };
   }
   return result;
-}
-
-// ---------- Are all the parts here? ----------
-
-export type PartCount = PartItem & { seen: number };
-export type PartsCheck = { counts: PartCount[]; outlines: (Located & { phrase: string })[]; say: string };
-
-/**
- * Counts each listed part with SAM by name. The counts come from SAM's detections, not from a
- * model's opinion, so "you have 4 of 5 wheels" is something the app actually measured.
- */
-export async function checkParts(frame: Frame, parts: PartItem[]): Promise<PartsCheck> {
-  const results = await Promise.all(
-    parts.map(async (p) => {
-      const seg = await sam(frame.image, p.phrase);
-      return { part: p, seg };
-    }),
-  );
-  const counts = results.map(({ part, seg }) => ({ ...part, seen: seg.outlines.length }));
-  const missing = counts.filter((c) => c.seen < c.count);
-  const say = missing.length
-    ? `I can see most of it. ` +
-      missing.map((m) => `${m.seen} of ${m.count} ${m.name}`).join(", ") +
-      ". Check the box, or move them into view."
-    : "Everything on the list is here. Let's start.";
-  return {
-    counts,
-    outlines: results.filter((r) => r.seg.outlines.length).map((r) => ({ ...r.seg, via: "name" as const, phrase: r.part.phrase })),
-    say,
-  };
-}
-
-// ---------- Does the finished thing look right? ----------
-
-export type FinalCheck = { reference: string; ok: boolean; say: string };
-
-/** Muse Image draws the finished product from the person's own photo; Spark compares the two. */
-export async function finalCheck(frame: Frame, guide: Guide): Promise<FinalCheck> {
-  const reference = await image(
-    `This photo shows a ${guide.product}. Redraw it fully and correctly assembled, in the same room and from ` +
-      "the same angle, with every part in its proper place. Keep it photorealistic.",
-    [frame.image],
-  );
-
-  const verdict = await spark<{ ok: boolean; say: string }>(
-    [
-      {
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text:
-              `First image: someone's ${guide.product} after assembly. Second image: how it should look. ` +
-              `The checks were:\n${guide.steps.map((s, i) => `${i + 1}. ${s.check ?? s.instruction}`).join("\n")}\n` +
-              "Compare the first photo against these checks and the reference. ok = everything looks right. " +
-              "say = two short spoken sentences: the verdict, and the one thing to fix if any.",
-          },
-          { type: "image_url", image_url: { url: frame.image } },
-          { type: "image_url", image_url: { url: reference } },
-        ],
-      },
-    ],
-    {
-      schema: {
-        name: "final_check",
-        schema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["ok", "say"],
-          properties: { ok: { type: "boolean" }, say: { type: "string" } },
-        },
-      },
-      effort: "medium",
-    },
-  );
-  return { reference, ...verdict };
 }

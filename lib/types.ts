@@ -1,25 +1,34 @@
 // Shapes shared by the API routes and the client.
 
+/** A camera frame: JPEG data URL plus its pixel size. */
+export type Frame = { image: string; width: number; height: number };
+
+/** Safety checkpoints that have to pass (on camera) before a repair's real steps start. Decided in code. */
+export type Gate = "unplugged" | "cooled" | "blade_stopped";
+
 export type Step = {
   /** What to do, said out loud and shown on the card. */
   instruction: string;
   /** Short plain noun phrase SAM can find, e.g. "seat post" (not "gas lift cylinder"). */
   part: string;
-  /** What the step looks like when it's done, used to check the user's work. */
+  /** What the step looks like when it's done, used to check the person's work. */
   check?: string;
   /** True when SAM found `part` by name on the person's photos at planning time. */
   partVerified?: boolean;
+  /** A safety checkpoint: the guide can't move past it until a camera check passes. */
+  gate?: Gate;
 };
 
 export type PartItem = { name: string; phrase: string; count: number };
 
 export type Guide = {
   product: string;
-  /** "manual": read from the user's manual photos. "web": from web pages. "typical": standard steps for this kind of product. */
+  /** "manual": from the person's manual photos. "web": from web pages. "typical": standard steps for this kind of job. */
   basis: "manual" | "web" | "typical";
+  /** Tools and spare parts needed. */
   parts: PartItem[];
   steps: Step[];
-  /** Where the steps came from: the user's manual photos and/or web pages. */
+  /** Where the steps came from. */
   sources: string[];
 };
 
@@ -31,6 +40,9 @@ export type Outline = {
   /** SVG transform that places the mask onto the image (translate + scale). */
   transform: string;
 };
+
+/** Outlines in one photo's pixel space (for stored photos on the repair card). */
+export type PhotoOutline = { width: number; height: number; outlines: Outline[] };
 
 export type SegmentResponse = {
   width: number;

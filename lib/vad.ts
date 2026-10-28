@@ -4,7 +4,8 @@
 import { toWav } from "./wav-recorder";
 
 const START_MS = 150; // this long above the threshold = someone started talking
-const END_SILENCE_MS = 800; // this long below it = they finished
+// This long below it = they finished. 800 ms cut people off mid-sentence while they thought.
+const END_SILENCE_MS = 1300;
 const MIN_SPEECH_MS = 400; // shorter blips (a cough, a clank) are dropped
 const MAX_UTTERANCE_MS = 15000;
 const PRE_ROLL_MS = 300; // kept from before the start so first syllables aren't cut

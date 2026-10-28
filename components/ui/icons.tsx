@@ -112,3 +112,41 @@ export const ShieldIcon = (p: P) => (
     <path d="m9 12 2 2 4-4" />
   </Icon>
 );
+export const KeyboardIcon = (p: P) => (
+  <Icon {...p}>
+    <rect x="2" y="6" width="20" height="12" rx="2" />
+    <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10" />
+  </Icon>
+);
+export const EyeIcon = (p: P) => (
+  <Icon {...p}>
+    <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z" />
+    <circle cx="12" cy="12" r="3" />
+  </Icon>
+);
+export const HandIcon = (p: P) => (
+  <Icon {...p}>
+    <path d="M18 11V6a2 2 0 0 0-4 0v5M14 10V4a2 2 0 0 0-4 0v6M10 10.5V6a2 2 0 0 0-4 0v8" />
+    <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.9-6-2.4l-3.6-3.6a2 2 0 0 1 2.8-2.8L7 15" />
+  </Icon>
+);
+export const WaveIcon = (p: P) => (
+  <Icon {...p}>
+    <path d="M2 12h2M6 8v8M10 4v16M14 7v10M18 10v4M22 12h0" />
+  </Icon>
+);
+export const ChatBubbleIcon = (p: P) => (
+  <Icon {...p}>
+    <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z" />
+  </Icon>
+);
+export const WrenchIcon = (p: P) => (
+  <Icon {...p}>
+    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9l-3.8 3.8Z" />
+  </Icon>
+);
+export const ChevronLeftIcon = (p: P) => (
+  <Icon {...p}>
+    <path d="m15 6-6 6 6 6" />
+  </Icon>
+);

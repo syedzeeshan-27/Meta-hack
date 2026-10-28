@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
-import Home from "@/components/Home";
+import Landing from "@/components/Landing";
 
 export const metadata: Metadata = {
-  title: "Deposit Guard",
-  description: "Proof of your flat's condition, so your deposit comes back.",
+  title: "FixCam",
+  description: "A repair technician in your phone: it finds what's wrong, checks it's safe, and walks you through the fix.",
 };
 
 export default function HomePage() {
-  return <Home />;
+  return <Landing />;
 }

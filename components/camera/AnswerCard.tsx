@@ -1,9 +1,9 @@
 import { AlertIcon, Chip, chipClass } from "@/components/ui";
-import type { AskSource } from "./useAsk";
+import type { Source } from "@/lib/repair/types";
 import { hostname } from "./util";
 
 /**
- * Ask's answer, captioned. Same look as CaptionBar (80% black scrim), but not clamped to two lines:
+ * FixCam's answer, captioned. Same look as CaptionBar (80% black scrim), but not clamped to two lines:
  * an answer is often three or four sentences and has to be readable in full on mute.
  * `bare` drops the scrim for use inside a dark Sheet.
  */
@@ -23,7 +23,7 @@ export function AnswerCard({
   thinking: boolean;
   status?: string;
   phrase?: string;
-  sources: AskSource[];
+  sources: Source[];
   error?: string;
   placeholder?: string;
   bare?: boolean;

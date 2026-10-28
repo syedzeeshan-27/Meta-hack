@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
-/* Design tokens (see C:\Metahack\UIUX.md). Every colour in the app comes from here.
-   Tones mean one thing each: info = "here it is", existing = already there at move-in,
-   new = new damage, ok = done / fine. */
+/* Design tokens. Every colour in the app comes from here.
+   Tones mean one thing each: info = "here it is", existing = caution / safety check,
+   new = something wrong or unsafe, ok = done / fine. */
 :root {
   --paper: #f6f5f2;
   --surface: #ffffff;

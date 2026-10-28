@@ -1,12 +1,11 @@
-// Storage for inspections, comparisons and photos.
+// Storage for repair cards and their photos.
 // Default: files under .data/ (photos served by /api/files/[...path]).
-// When BLOB_READ_WRITE_TOKEN is set (Vercel): Vercel Blob. JSON docs sit at fixed pathnames
-// (inspections/{id}.json, comparisons/{id}.json) and are overwritten in place; photos are public blobs
-// with a random suffix, so a photo URL always points at the exact bytes that were fingerprinted.
+// When BLOB_READ_WRITE_TOKEN is set (Vercel): Vercel Blob. A card is written once, at the end of a repair,
+// so there are no concurrent writers; photos are public blobs with a random suffix.
 import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { Comparison, Inspection } from "./inspect/types";
+import type { RepairCard } from "./repair/types";
 
 const ROOT = path.join(process.cwd(), ".data");
 const ONE_YEAR = 365 * 24 * 60 * 60;
@@ -80,35 +79,8 @@ async function readJson<T>(rel: string): Promise<T | null> {
   }
 }
 
-export const saveInspection = (i: Inspection) => writeJson(`inspections/${i.id}.json`, i);
-export const getInspection = async (id: string) =>
-  isSafeId(id) ? readJson<Inspection>(`inspections/${id}.json`) : null;
-export const saveComparison = (c: Comparison) => writeJson(`comparisons/${c.inspectionId}.json`, c);
-export const getComparison = async (inspectionId: string) =>
-  isSafeId(inspectionId) ? readJson<Comparison>(`comparisons/${inspectionId}.json`) : null;
-
-export async function listInspections(): Promise<Inspection[]> {
-  let all: (Inspection | null)[] = [];
-  if (onBlob()) {
-    const { list } = await blobSdk();
-    const blobs: { url: string; etag: string }[] = [];
-    let cursor: string | undefined;
-    do {
-      const page = await list({ prefix: "inspections/", cursor });
-      blobs.push(...page.blobs);
-      cursor = page.hasMore ? page.cursor : undefined;
-    } while (cursor);
-    all = await Promise.all(blobs.map((b) => fetchBlobJson<Inspection>(b.url, b.etag)));
-  } else {
-    try {
-      const files = (await readdir(path.join(ROOT, "inspections"))).filter((f) => f.endsWith(".json"));
-      all = await Promise.all(files.map((f) => readJson<Inspection>(`inspections/${f}`)));
-    } catch {
-      return [];
-    }
-  }
-  return all.filter((i): i is Inspection => !!i).sort((a, b) => b.createdAt - a.createdAt);
-}
+export const saveRepair = (c: RepairCard) => writeJson(`repairs/${c.id}.json`, c);
+export const getRepair = async (id: string) => (isSafeId(id) ? readJson<RepairCard>(`repairs/${id}.json`) : null);
 
 // ---------- Photos ----------
 

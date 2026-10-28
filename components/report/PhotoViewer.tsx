@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent } from "rea
 import { createPortal } from "react-dom";
 import { IconButton } from "@/components/ui/Button";
 import { CloseIcon } from "@/components/ui/icons";
-import type { DefectOutline } from "@/lib/inspect/types";
+import type { PhotoOutline } from "@/lib/types";
 import { ZoomInIcon, ZoomOutIcon } from "./icons";
 import { OutlineOverlay, type OutlineTone } from "./Outline";
 
@@ -13,7 +13,7 @@ export type Photo = {
   width: number;
   height: number;
   alt: string;
-  outline?: DefectOutline;
+  outline?: PhotoOutline;
   tone: OutlineTone;
   /** Top line of the viewer, e.g. "After · Bedroom · move-out, 26 Oct 2026, 5:07 pm". */
   title: string;

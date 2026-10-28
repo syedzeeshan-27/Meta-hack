@@ -11,11 +11,11 @@ html:root{color-scheme:light;--paper:#fff;--surface:#fff;--ink:#16171a;--muted:#
 [data-report]{-webkit-print-color-adjust:exact;print-color-adjust:exact}
 }`;
 
-/** The report's document column: 768px, centred; full width on paper. */
+/** The card's document column: 768px, centred; full width on paper. */
 export function ReportShell({ children }: { children: ReactNode }) {
   return (
     <Page wide className="print:max-w-none print:px-0 print:pt-0 print:pb-0">
-      <style href="deposit-report-print" precedence="default">
+      <style href="repair-card-print" precedence="default">
         {PRINT_CSS}
       </style>
       <div data-report>{children}</div>
@@ -25,7 +25,7 @@ export function ReportShell({ children }: { children: ReactNode }) {
 
 type PanelIcon = "busy" | "alert" | "info";
 
-/** Not found / waiting / info states. Neutral on purpose: red and amber only ever mean damage. */
+/** Not found / waiting / info states. Neutral on purpose: red and amber only ever mean a problem. */
 export function StatusPanel({
   title,
   icon = "info",

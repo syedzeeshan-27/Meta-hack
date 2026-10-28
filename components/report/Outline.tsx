@@ -1,6 +1,6 @@
-import type { DefectOutline } from "@/lib/inspect/types";
+import type { PhotoOutline } from "@/lib/types";
 
-/** existing = already there at move-in (amber), new = new damage (red), info = normal wear / "here it is" (teal). */
+/** new = something wrong (red), existing = caution (amber), info = "here it is" (teal). */
 export type OutlineTone = "existing" | "new" | "info";
 
 const TONE_CLASS: Record<OutlineTone, string> = { existing: "tone-existing", new: "tone-new", info: "" };
@@ -9,7 +9,7 @@ const TONE_CLASS: Record<OutlineTone, string> = { existing: "tone-existing", new
  * SAM outlines over a photo, using the shared `part-outline` tones. The SVG uses the frame's pixel space
  * with "meet", the same fit as the image's object-contain, so outlines land on the photo whatever the box shape.
  */
-export function OutlineOverlay({ outline, tone }: { outline: DefectOutline; tone: OutlineTone }) {
+export function OutlineOverlay({ outline, tone }: { outline: PhotoOutline; tone: OutlineTone }) {
   return (
     <svg
       aria-hidden

@@ -1,8 +1,7 @@
 "use client";
 
-// The one camera used by every camera screen (walkthrough, Ask, /live, the step guide).
-// It owns the getUserMedia stream, the <video>, the outline overlay and the permission / error screens,
-// and exposes captureFrame() through a ref so sheets opened over it (Ask) reuse the same stream.
+// The camera behind the fix screen. It owns the getUserMedia stream, the <video>, the outline overlay and
+// the permission / error screens, and exposes captureFrame() through a ref.
 
 import Link from "next/link";
 import { useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
