@@ -1,15 +1,60 @@
 @import "tailwindcss";
 
+/* Design tokens (see C:\Metahack\UIUX.md). Every colour in the app comes from here.
+   Tones mean one thing each: info = "here it is", existing = already there at move-in,
+   new = new damage, ok = done / fine. */
+:root {
+  --paper: #f6f5f2;
+  --surface: #ffffff;
+  --ink: #16171a;
+  --muted: #5f6368;
+  --line: #e2e0db;
+  --info: #0f766e;
+  --existing: #b45309;
+  --new: #c62828;
+  --ok: #15803d;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #0f1012;
+    --surface: #18191c;
+    --ink: #f1f1ef;
+    --muted: #a0a3a8;
+    --line: #2a2c30;
+    --info: #2dd4bf;
+    --existing: #f59e0b;
+    --new: #f87171;
+    --ok: #4ade80;
+  }
+}
+
 @theme inline {
   --font-sans: var(--font-geist-sans);
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-info: var(--info);
+  --color-existing: var(--existing);
+  --color-new: var(--new);
+  --color-ok: var(--ok);
+  /* Camera screens are always dark, so they use these fixed bright tones. */
+  --color-cam-info: #2dd4bf;
+  --color-cam-existing: #f59e0b;
+  --color-cam-new: #f87171;
+  --color-cam-ok: #4ade80;
 }
 
 body {
   font-family: var(--font-geist-sans), system-ui, sans-serif;
   overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
-/* The glowing outline SAM draws around the part to touch. */
+/* ---------- Outlines drawn over camera frames and report photos ---------- */
+
 @keyframes outline-pulse {
   0%,
   100% {
@@ -20,27 +65,31 @@ body {
   }
 }
 
+/* Default tone: info (teal). Pulses only while `.is-fresh` is set by the screen that drew it. */
 .part-outline {
-  fill: rgb(34 211 238 / 0.18);
-  stroke: rgb(34 211 238);
+  --tone: 45 212 191;
+  fill: rgb(var(--tone) / 0.16);
+  stroke: rgb(var(--tone));
   stroke-linejoin: round;
-  filter: drop-shadow(0 0 6px rgb(34 211 238 / 0.9));
-  animation: outline-pulse 1.4s ease-in-out infinite;
+  filter: drop-shadow(0 0 6px rgb(var(--tone) / 0.85));
 }
-
+.part-outline.is-fresh {
+  animation: outline-pulse 1.4s ease-in-out 3;
+}
+.part-outline.tone-existing {
+  --tone: 245 158 11;
+}
+.part-outline.tone-new,
 .part-outline.tone-problem {
-  fill: rgb(248 113 113 / 0.2);
-  stroke: rgb(248 113 113);
-  filter: drop-shadow(0 0 6px rgb(248 113 113 / 0.9));
+  --tone: 248 113 113;
 }
-
+.part-outline.tone-ok,
 .part-outline.tone-parts {
-  fill: rgb(74 222 128 / 0.15);
-  stroke: rgb(74 222 128);
-  filter: drop-shadow(0 0 6px rgb(74 222 128 / 0.9));
+  --tone: 74 222 128;
 }
 
-/* Live mic ring: --level (0..1) is written straight from the mic, ~40 times a second. */
+/* ---------- Live mic ring: --level (0..1) is written straight from the mic ---------- */
+
 .mic-level {
   transform: scale(calc(1 + var(--level, 0) * 0.55));
   transition: transform 90ms linear;
@@ -58,4 +107,33 @@ body {
 
 .mic-speak {
   animation: mic-speak 0.9s ease-in-out infinite;
+}
+
+/* ---------- Sheets and toasts ---------- */
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+.anim-sheet {
+  animation: sheet-up 200ms ease-out;
+}
+.anim-fade {
+  animation: fade-in 180ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
 }
