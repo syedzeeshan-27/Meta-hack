@@ -57,14 +57,12 @@ export function Sheet({
         } pb-[env(safe-area-inset-bottom)]`}
       >
         <div className="mx-auto mt-2 h-1 w-10 rounded-full bg-current opacity-20 sm:hidden" aria-hidden />
-        {(title || onClose) && (
-          <div className="flex items-center justify-between gap-3 px-5 pb-1 pt-3">
-            <h2 className="text-lg font-semibold">{title}</h2>
-            <IconButton label="Close" onDark={onDark} size={40} onClick={onClose}>
-              <CloseIcon />
-            </IconButton>
-          </div>
-        )}
+        <div className="flex items-center justify-between gap-3 px-5 pb-1 pt-3">
+          <h2 className="text-lg font-semibold">{title}</h2>
+          <IconButton label="Close" onDark={onDark} size={40} onClick={onClose}>
+            <CloseIcon />
+          </IconButton>
+        </div>
         <div className="overflow-y-auto px-5 pb-5 pt-2">{children}</div>
         {footer && <div className={`border-t px-5 py-4 ${onDark ? "border-white/10" : "border-line"}`}>{footer}</div>}
       </div>
