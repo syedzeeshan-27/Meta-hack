@@ -25,9 +25,14 @@ export async function startRecording(): Promise<WavRecorder> {
       stream.getTracks().forEach((t) => t.stop());
       const rate = ctx.sampleRate;
       await ctx.close();
-      return encodeWav(downsample(concat(chunks), rate, TARGET_RATE), TARGET_RATE);
+      return toWav(chunks, rate);
     },
   };
+}
+
+/** Raw mic chunks at `rate` → the 16 kHz mono WAV that /api/transcribe takes. */
+export function toWav(chunks: Float32Array[], rate: number): Blob {
+  return encodeWav(downsample(concat(chunks), rate, TARGET_RATE), TARGET_RATE);
 }
 
 function concat(chunks: Float32Array[]): Float32Array {
@@ -55,7 +60,7 @@ function downsample(input: Float32Array, from: number, to: number): Float32Array
   return out;
 }
 
-function encodeWav(samples: Float32Array, rate: number): Blob {
+export function encodeWav(samples: Float32Array, rate: number): Blob {
   const buf = new ArrayBuffer(44 + samples.length * 2);
   const v = new DataView(buf);
   const str = (o: number, s: string) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));

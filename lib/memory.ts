@@ -14,6 +14,12 @@ export function remember(sessionId: string, entry: MemoryEntry): void {
   timelines.set(sessionId, kept);
 }
 
+/** The scene hasn't changed: move the latest entry's time forward so it reads as "last seen at". */
+export function touchLast(sessionId: string, t: number): void {
+  const last = timelines.get(sessionId)?.at(-1);
+  if (last && t > last.t) last.t = t;
+}
+
 export function recent(sessionId: string, n = 5): MemoryEntry[] {
   return (timelines.get(sessionId) ?? []).slice(-n);
 }

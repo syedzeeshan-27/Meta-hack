@@ -39,3 +39,23 @@ body {
   stroke: rgb(74 222 128);
   filter: drop-shadow(0 0 6px rgb(74 222 128 / 0.9));
 }
+
+/* Live mic ring: --level (0..1) is written straight from the mic, ~40 times a second. */
+.mic-level {
+  transform: scale(calc(1 + var(--level, 0) * 0.55));
+  transition: transform 90ms linear;
+}
+
+@keyframes mic-speak {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.15);
+  }
+}
+
+.mic-speak {
+  animation: mic-speak 0.9s ease-in-out infinite;
+}
