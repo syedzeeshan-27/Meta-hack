@@ -99,11 +99,16 @@ export async function sam(image: string, phrase: string): Promise<Segmentation> 
 
   const outlines = recordsOfKind(result.records, "box").map((b) => {
     const m = masks.get(b.objectId);
+    if (!m) return { id: b.objectId, box: boxOf(b), path: "", transform: "" };
+    // Mask paths are in the mask's own pixels, which SAM shrinks for large objects
+    // (a 610x1177 chair came back as a 531x1024 mask), so place and scale them onto the box.
+    const sx = (m.bounds.right - m.bounds.left) / m.mask.width;
+    const sy = (m.bounds.bottom - m.bounds.top) / m.mask.height;
     return {
       id: b.objectId,
-      box: { left: b.left, top: b.top, right: b.right, bottom: b.bottom },
-      // Mask paths are local to the mask's own bounds, so shift them into image space.
-      path: m ? shiftPath(decodeMaskToSVGPath(m.mask), m.bounds.left, m.bounds.top) : "",
+      box: boxOf(b),
+      path: decodeMaskToSVGPath(m.mask),
+      transform: `translate(${m.bounds.left} ${m.bounds.top}) scale(${round(sx)} ${round(sy)})`,
     };
   });
 
@@ -114,19 +119,13 @@ export async function sam(image: string, phrase: string): Promise<Segmentation> 
   };
 }
 
-/** Offsets every absolute x,y pair in an SVG path made of M/L/H/V/Z commands. */
-function shiftPath(d: string, dx: number, dy: number): string {
-  return d.replace(/([MLHV])([^MLHVZ]*)/gi, (_, cmd: string, args: string) => {
-    const nums = args.trim().split(/[\s,]+/).filter(Boolean).map(Number);
-    const up = cmd.toUpperCase();
-    if (cmd !== up) return cmd + args; // relative commands need no shift
-    if (up === "H") return "H" + nums.map((x) => x + dx).join(" ");
-    if (up === "V") return "V" + nums.map((y) => y + dy).join(" ");
-    const out: number[] = [];
-    for (let i = 0; i < nums.length; i += 2) out.push(nums[i] + dx, nums[i + 1] + dy);
-    return up + out.join(" ");
-  });
-}
+const boxOf = (b: { left: number; top: number; right: number; bottom: number }) => ({
+  left: b.left,
+  top: b.top,
+  right: b.right,
+  bottom: b.bottom,
+});
+const round = (n: number) => Math.round(n * 10000) / 10000;
 
 // ---------- Muse Voice Transcribe ----------
 

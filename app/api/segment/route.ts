@@ -28,7 +28,8 @@ function fakeSegment(started: number): SegmentResponse {
       {
         id: "0",
         box: { left: 520, top: 260, right: 760, bottom: 460 },
-        path: "M540 260 L740 260 L760 280 L760 440 L740 460 L540 460 L520 440 L520 280 Z",
+        path: "M20 0 L220 0 L240 20 L240 180 L220 200 L20 200 L0 180 L0 20 Z",
+        transform: "translate(520 260)",
       },
     ],
     ms: Date.now() - started,

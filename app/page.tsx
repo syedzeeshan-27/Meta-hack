@@ -130,7 +130,14 @@ export default function FixCam() {
           preserveAspectRatio="xMidYMid slice"
         >
           {seg.outlines.map((o) => (
-            <path key={o.id} d={o.path} className="part-outline" strokeWidth={Math.max(3, seg.width / 250)} />
+            <path
+              key={o.id}
+              d={o.path}
+              transform={o.transform}
+              className="part-outline"
+              vectorEffect="non-scaling-stroke"
+              strokeWidth={4}
+            />
           ))}
         </svg>
       )}

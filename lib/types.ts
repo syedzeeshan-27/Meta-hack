@@ -10,7 +10,10 @@ export type Step = {
 export type Outline = {
   id: string;
   box: { left: number; top: number; right: number; bottom: number };
+  /** Outline in mask pixels; draw it with `transform` to land on the image. */
   path: string;
+  /** SVG transform that places the mask onto the image (translate + scale). */
+  transform: string;
 };
 
 export type SegmentResponse = {
