@@ -37,14 +37,14 @@ export default function CameraView({ guide, onExit }: { guide: Guide; onExit: ()
   }
 
   /** Grab the current camera frame as a JPEG data URL, capped at MAX_FRAME_WIDTH. */
-  function captureFrame(): string {
+  function captureFrame(): { image: string; width: number; height: number } {
     const video = videoRef.current!;
     const scale = Math.min(1, MAX_FRAME_WIDTH / video.videoWidth);
     const canvas = document.createElement("canvas");
     canvas.width = Math.round(video.videoWidth * scale);
     canvas.height = Math.round(video.videoHeight * scale);
     canvas.getContext("2d")!.drawImage(video, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL("image/jpeg", 0.85);
+    return { image: canvas.toDataURL("image/jpeg", 0.85), width: canvas.width, height: canvas.height };
   }
 
   const showMe = useCallback(async () => {
@@ -55,14 +55,15 @@ export default function CameraView({ guide, onExit }: { guide: Guide; onExit: ()
       const res = await fetch("/api/segment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image: captureFrame(), phrase: step.part }),
+        body: JSON.stringify({ ...captureFrame(), phrase: step.part }),
       });
       const data = (await res.json()) as SegmentResponse & { error?: string };
       if (data.error) throw new Error(data.error);
       setSeg(data);
       setStatus(
         data.outlines.length
-          ? `Found the ${step.part} (${(data.ms / 1000).toFixed(1)}s${data.fake ? ", demo data" : ""})`
+          ? `Found the ${step.part}${data.via === "pointed" ? " (Spark spotted it)" : ""} · ` +
+              `${(data.ms / 1000).toFixed(1)}s${data.fake ? " · demo data" : ""}`
           : `Couldn't spot the ${step.part}. Try moving closer.`,
       );
     } catch (err) {

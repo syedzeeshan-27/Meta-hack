@@ -9,7 +9,7 @@ const STORAGE_KEY = "fixcam.guide";
 const MAX_PAGE_SIDE = 1600;
 
 const BASIS_LABEL: Record<Guide["basis"], string> = {
-  manual: "Read from your manual",
+  manual: "From your photos and notes",
   web: "Found on the web",
   typical: "Typical steps. Add manual photos for exact ones",
 };
@@ -17,6 +17,7 @@ const BASIS_LABEL: Record<Guide["basis"], string> = {
 export default function Home() {
   const [product, setProduct] = useState(DEFAULT_PRODUCT);
   const [pages, setPages] = useState<string[]>([]);
+  const [notes, setNotes] = useState("");
   const [guide, setGuide] = useState<Guide | null>(null);
   const [mode, setMode] = useState<"setup" | "camera">("setup");
   const [planning, setPlanning] = useState(false);
@@ -44,7 +45,7 @@ export default function Home() {
       const res = await fetch("/api/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ product, manualImages: pages }),
+        body: JSON.stringify({ product, manualImages: pages, userNotes: notes }),
       });
       const data = (await res.json()) as Guide & { error?: string };
       if (data.error) throw new Error(data.error);
@@ -79,7 +80,7 @@ export default function Home() {
           className="rounded-xl bg-white/10 px-4 py-3 text-base outline-none focus:ring-2 focus:ring-cyan-400"
         />
 
-        <p className="text-sm font-medium text-white/80">Photos of the manual (optional, but much better)</p>
+        <p className="text-sm font-medium text-white/80">Photos of the manual or the parts laid out (optional)</p>
         <div className="flex flex-wrap gap-2">
           {pages.map((src, i) => (
             // eslint-disable-next-line @next/next/no-img-element -- local data URLs
@@ -103,12 +104,24 @@ export default function Home() {
           </button>
         )}
 
+        <label className="text-sm font-medium text-white/80" htmlFor="notes">
+          How does it go together? (optional, in your own words)
+        </label>
+        <textarea
+          id="notes"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          rows={3}
+          placeholder="e.g. wheels into the base, then the gas lift, then the seat…"
+          className="rounded-xl bg-white/10 px-4 py-3 text-base outline-none placeholder:text-white/30 focus:ring-2 focus:ring-cyan-400"
+        />
+
         <button
           onClick={makeGuide}
           disabled={planning || !product.trim()}
           className="mt-2 rounded-full bg-cyan-400 py-4 text-lg font-semibold text-black disabled:opacity-50"
         >
-          {planning ? (pages.length ? "Reading your manual…" : "Looking it up…") : "Make my guide"}
+          {planning ? (pages.length || notes.trim() ? "Reading your photos…" : "Looking it up…") : "Make my guide"}
         </button>
         {planning && <p className="text-center text-sm text-white/50">This takes about 20–60 seconds.</p>}
         {error && <p className="text-sm text-red-400">{error}</p>}

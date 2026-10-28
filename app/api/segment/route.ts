@@ -1,17 +1,24 @@
-import { sam } from "@/lib/meta";
+import { locatePart } from "@/lib/locate";
 import type { SegmentResponse } from "@/lib/types";
 
-// POST { image: dataURL, phrase: string } -> outlines of every match, in image pixels.
+// POST { image: dataURL, phrase, width, height } -> outlines of the part, in image pixels.
 export async function POST(request: Request) {
-  const { image, phrase } = (await request.json()) as { image: string; phrase: string };
-  if (!image || !phrase) return Response.json({ error: "image and phrase are required" }, { status: 400 });
+  const { image, phrase, width, height } = (await request.json()) as {
+    image: string;
+    phrase: string;
+    width: number;
+    height: number;
+  };
+  if (!image || !phrase || !width || !height) {
+    return Response.json({ error: "image, phrase, width and height are required" }, { status: 400 });
+  }
 
   const started = Date.now();
   if (!process.env.MODEL_API_KEY) return Response.json(fakeSegment(started));
 
   try {
-    const seg = await sam(image, phrase);
-    return Response.json({ ...seg, ms: Date.now() - started } satisfies SegmentResponse);
+    const found = await locatePart(image, phrase, { width, height });
+    return Response.json({ ...found, ms: Date.now() - started } satisfies SegmentResponse);
   } catch (err) {
     return Response.json({ error: String(err) }, { status: 502 });
   }
@@ -19,11 +26,9 @@ export async function POST(request: Request) {
 
 // Without an API key the UI still works: a pulsing rounded box in the middle of the frame.
 function fakeSegment(started: number): SegmentResponse {
-  const w = 1280;
-  const h = 720;
   return {
-    width: w,
-    height: h,
+    width: 1280,
+    height: 720,
     outlines: [
       {
         id: "0",
@@ -32,6 +37,7 @@ function fakeSegment(started: number): SegmentResponse {
         transform: "translate(520 260)",
       },
     ],
+    via: "name",
     ms: Date.now() - started,
     fake: true,
   };

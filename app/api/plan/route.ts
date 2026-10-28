@@ -5,9 +5,13 @@ import type { Guide } from "@/lib/types";
 // Reading a manual (or searching the web for one) takes 20-60s.
 export const maxDuration = 120;
 
-// POST { product: string, manualImages?: dataURL[] } -> Guide
+// POST { product: string, manualImages?: dataURL[], userNotes?: string } -> Guide
 export async function POST(request: Request) {
-  const { product, manualImages = [] } = (await request.json()) as { product?: string; manualImages?: string[] };
+  const { product, manualImages = [], userNotes = "" } = (await request.json()) as {
+    product?: string;
+    manualImages?: string[];
+    userNotes?: string;
+  };
   if (!product?.trim()) return Response.json({ error: "Tell me what you're building first." }, { status: 400 });
 
   if (!process.env.MODEL_API_KEY) {
@@ -16,7 +20,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    return Response.json(await planGuide({ product: product.trim(), manualImages }));
+    return Response.json(await planGuide({ product: product.trim(), manualImages, userNotes }));
   } catch (err) {
     return Response.json({ error: String(err) }, { status: 502 });
   }

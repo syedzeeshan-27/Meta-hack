@@ -2,6 +2,7 @@
 // it reads MODEL_API_KEY.
 import OpenAI from "openai";
 import {
+  buildObjectPrompt,
   decodeMaskToSVGPath,
   parseImageStream,
   recordsOfKind,
@@ -72,10 +73,25 @@ export async function spark<T = string>(
 export type Segmentation = { width: number; height: number; outlines: Outline[] };
 
 /**
- * Outline every match for a short noun phrase ("gas lift cylinder") in one image.
+ * Outline every match for a short plain noun phrase ("seat post") in one image.
  * `image` is a URL or a data: URL.
  */
-export async function sam(image: string, phrase: string): Promise<Segmentation> {
+export function sam(image: string, phrase: string): Promise<Segmentation> {
+  return runSam(image, phrase);
+}
+
+/** Outline the single object under a point, for parts SAM can't find by name. Point is in image pixels. */
+export function samAtPoint(
+  image: string,
+  point: { x: number; y: number },
+  size: { width: number; height: number },
+): Promise<Segmentation> {
+  const x = Math.max(0, Math.min(size.width - 1, Math.round(point.x)));
+  const y = Math.max(0, Math.min(size.height - 1, Math.round(point.y)));
+  return runSam(image, buildObjectPrompt({ size, objects: [{ id: 1, prompts: [{ points: [{ x, y }] }] }] }));
+}
+
+async function runSam(image: string, text: string): Promise<Segmentation> {
   const stream = await meta().responses.create({
     model: MODELS.sam,
     stream: true,
@@ -85,7 +101,7 @@ export async function sam(image: string, phrase: string): Promise<Segmentation> 
         type: "message",
         role: "user",
         content: [
-          { type: "input_text", text: phrase },
+          { type: "input_text", text },
           { type: "input_image", image_url: image, detail: "auto" },
         ],
       },

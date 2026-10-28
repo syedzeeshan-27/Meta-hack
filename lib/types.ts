@@ -7,6 +7,8 @@ export type Step = {
   part: string;
   /** What the step looks like when it's done, used to check the user's work. */
   check?: string;
+  /** True when SAM found `part` by name on the person's photos at planning time. */
+  partVerified?: boolean;
 };
 
 export type PartItem = { name: string; phrase: string; count: number };
@@ -34,6 +36,8 @@ export type SegmentResponse = {
   width: number;
   height: number;
   outlines: Outline[];
+  /** "name": SAM found it by name. "pointed": Spark pointed, SAM outlined from the point. */
+  via: "name" | "pointed" | "none";
   ms: number;
   fake?: boolean;
 };

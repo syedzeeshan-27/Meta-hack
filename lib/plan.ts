@@ -1,6 +1,6 @@
 // Turns a product's manual (photos of the paper pages) and/or a web search into a FixCam guide.
 import type OpenAI from "openai";
-import { meta, MODELS, spark, type SparkContent } from "./meta";
+import { meta, MODELS, sam, spark, type SparkContent } from "./meta";
 import type { Guide } from "./types";
 
 const GUIDE_SCHEMA = {
@@ -46,20 +46,28 @@ const PLANNER_PROMPT = `You turn product assembly instructions into a hands-free
 
 Rules:
 - One physical action per step. Instructions are short, spoken English (max ~20 words), no step numbers.
-- Follow the source's order. Set "basis" to "manual" when the steps come from the attached manual pages, "web" when they come from the web notes.
+- Follow the source's order. The person's own notes are the most trusted source for order; the photos show what each part looks like.
+- Set "basis" to "manual" when the steps come from the attached photos (manual pages or a parts layout) and/or the person's notes, "web" when they come from the web notes.
 - If the sources don't actually describe the assembly steps, write the standard assembly steps for this kind of product and set "basis" to "typical". Never return an empty step list.
 - "part" names the single object the person should look at for that step, as a short PLAIN VISUAL noun phrase of 1-3 everyday words that an object-segmentation model can find in a photo. Describe what it looks like, not its technical name: "seat post" not "gas lift cylinder", "wheel" not "castor", "armrest" not "1-way adjustable armrest assembly".
 - "check" says in one sentence what it looks like when the step is done correctly.
 - "parts" lists what comes in the box with the same kind of plain "phrase" and a count.`;
 
-/** Builds a guide from manual photos and/or a web search for the product name. */
-export async function planGuide(input: { product: string; manualImages?: string[] }): Promise<Guide> {
+/** Builds a guide from manual/parts photos and the person's own notes, or a web search when given neither. */
+export async function planGuide(input: {
+  product: string;
+  manualImages?: string[];
+  userNotes?: string;
+}): Promise<Guide> {
   const images = input.manualImages ?? [];
-  const sources: string[] = images.length ? [`${images.length} manual photo(s)`] : [];
+  const userNotes = input.userNotes?.trim() ?? "";
+  const sources: string[] = [];
+  if (images.length) sources.push(`${images.length} photo(s) you added`);
+  if (userNotes) sources.push("your notes");
   let notes = "";
 
-  // Without the paper manual, fall back to what the web knows about this exact product.
-  if (!images.length) {
+  // With nothing from the person, fall back to what the web knows about this exact product.
+  if (!images.length && !userNotes) {
     const research = await researchAssembly(input.product);
     notes = research.text;
     sources.push(...research.urls);
@@ -70,7 +78,8 @@ export async function planGuide(input: { product: string; manualImages?: string[
       type: "text",
       text:
         `Product: ${input.product}\n\n` +
-        (images.length ? "The attached images are pages of its assembly manual.\n" : "") +
+        (images.length ? "The attached images are manual pages and/or photos of the parts laid out.\n" : "") +
+        (userNotes ? `The person's own notes on how it goes together:\n${userNotes}\n` : "") +
         (notes ? `Assembly notes found on the web:\n${notes}\n` : "") +
         "Write the guide.",
     },
@@ -85,8 +94,75 @@ export async function planGuide(input: { product: string; manualImages?: string[
     { schema: GUIDE_SCHEMA, maxTokens: 8000, effort: "medium" },
   );
   // Spark labelled a web-only plan "manual" in testing, so the label is decided here, not by the model.
-  const basis = !images.length && guide.basis === "manual" ? "web" : guide.basis;
-  return checkGuide({ ...guide, basis, sources });
+  const basis = !images.length && !userNotes && guide.basis === "manual" ? "web" : guide.basis;
+  const checked = checkGuide({ ...guide, basis, sources });
+  return images.length ? verifyPartPhrases(checked, images) : checked;
+}
+
+/**
+ * Tests every step's part phrase with SAM on the person's photos. A phrase SAM can't find gets
+ * swapped for a plain alternative that it can, so "Show me" works by name (~2s) at build time
+ * instead of falling back to the slower Spark-points route (~6-9s).
+ */
+async function verifyPartPhrases(guide: Guide, images: string[]): Promise<Guide> {
+  const phrases = [...new Set(guide.steps.map((s) => s.part))];
+  const found = new Map<string, string | null>();
+
+  await Promise.all(
+    phrases.map(async (phrase) => {
+      if (await foundInAny(images, phrase)) return found.set(phrase, phrase);
+      for (const alt of await alternativePhrases(phrase, images)) {
+        if (await foundInAny(images, alt)) return found.set(phrase, alt);
+      }
+      found.set(phrase, null);
+    }),
+  );
+
+  return {
+    ...guide,
+    steps: guide.steps.map((s) => {
+      const phrase = found.get(s.part);
+      return phrase ? { ...s, part: phrase, partVerified: true } : { ...s, partVerified: false };
+    }),
+  };
+}
+
+async function foundInAny(images: string[], phrase: string): Promise<boolean> {
+  for (const image of images) if ((await sam(image, phrase)).outlines.length) return true;
+  return false;
+}
+
+async function alternativePhrases(phrase: string, images: string[]): Promise<string[]> {
+  const { phrases } = await spark<{ phrases: string[] }>(
+    [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text:
+              `An object-segmentation model can't find "${phrase}" in these photos. Give 3 other short plain ` +
+              "descriptions (1-3 everyday words, mostly colour + shape, like \"black cylinder\" or \"black plastic star\") " +
+              "of that same object as it looks here.",
+          },
+          ...images.map((url) => ({ type: "image_url" as const, image_url: { url } })),
+        ],
+      },
+    ],
+    {
+      schema: {
+        name: "phrases",
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["phrases"],
+          properties: { phrases: { type: "array", items: { type: "string" } } },
+        },
+      },
+      effort: "low",
+    },
+  );
+  return phrases.slice(0, 3);
 }
 
 /** Spark with web search: how is this product assembled? Returns notes plus the URLs it cited. */
