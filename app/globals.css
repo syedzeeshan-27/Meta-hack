@@ -27,3 +27,15 @@ body {
   filter: drop-shadow(0 0 6px rgb(34 211 238 / 0.9));
   animation: outline-pulse 1.4s ease-in-out infinite;
 }
+
+.part-outline.tone-problem {
+  fill: rgb(248 113 113 / 0.2);
+  stroke: rgb(248 113 113);
+  filter: drop-shadow(0 0 6px rgb(248 113 113 / 0.9));
+}
+
+.part-outline.tone-parts {
+  fill: rgb(74 222 128 / 0.15);
+  stroke: rgb(74 222 128);
+  filter: drop-shadow(0 0 6px rgb(74 222 128 / 0.9));
+}

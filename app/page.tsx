@@ -124,6 +124,15 @@ export default function Home() {
           {planning ? (pages.length || notes.trim() ? "Reading your photos…" : "Looking it up…") : "Make my guide"}
         </button>
         {planning && <p className="text-center text-sm text-white/50">This takes about 20–60 seconds.</p>}
+        <button
+          onClick={() => {
+            setGuide({ product: product.trim(), basis: "typical", parts: [], steps: [], sources: [] });
+            setMode("camera");
+          }}
+          className="rounded-full bg-white/10 py-3 text-base font-medium"
+        >
+          Just point and ask
+        </button>
         {error && <p className="text-sm text-red-400">{error}</p>}
       </section>
 
