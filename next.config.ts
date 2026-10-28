@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // Lets a phone load the dev server through an ngrok HTTPS tunnel (phones need HTTPS for the camera).
+  allowedDevOrigins: ["*.ngrok-free.app", "*.ngrok-free.dev", "*.ngrok.app"],
   cacheComponents: true,
   partialPrefetching: true,
   turbopack: {
