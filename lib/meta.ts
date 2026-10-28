@@ -43,12 +43,19 @@ export type SparkMessage = {
 /** One Spark call. Pass `schema` to get parsed JSON back instead of text. */
 export async function spark<T = string>(
   messages: SparkMessage[],
-  opts: { schema?: { name: string; schema: Record<string, unknown> }; maxTokens?: number } = {},
+  opts: {
+    schema?: { name: string; schema: Record<string, unknown> };
+    maxTokens?: number;
+    /** Spark thinks before answering; "minimal" is fastest (~1.2s vs ~2s for a one-word reply). */
+    effort?: "minimal" | "low" | "medium" | "high";
+  } = {},
 ): Promise<T> {
   const res = await meta().chat.completions.create({
     model: MODELS.spark,
     messages: messages as OpenAI.Chat.ChatCompletionMessageParam[],
+    // Reasoning tokens count against this budget, so keep it generous.
     max_completion_tokens: opts.maxTokens ?? 2000,
+    ...(opts.effort && { reasoning_effort: opts.effort as OpenAI.ReasoningEffort }),
     ...(opts.schema && {
       response_format: {
         type: "json_schema",
